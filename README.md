@@ -4,6 +4,18 @@
 
 CLI tool to build OpenShell images.
 
+## Usage
+
+```
+openshell-image-builder [OPTIONS] <TAG>
+```
+
+| Argument / Option | Description |
+| --- | --- |
+| `<TAG>` | Tag for the built image (e.g. `myimage:latest`) |
+| `--config <CONFIG>` | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
+| `-v` / `-vv` | Increase log verbosity (info / debug) |
+
 ## Configuration
 
 ### File location
@@ -43,17 +55,17 @@ tag   = "latest"   # or "43", "24.04", etc.
 Use a specific config file:
 
 ```sh
-openshell-image-builder --config /path/to/config.toml
+openshell-image-builder --config /path/to/config.toml myimage:latest
 ```
 
 Use an environment variable:
 
 ```sh
-OPENSHELL_IMAGE_BUILDER_CONFIG=/path/to/config.toml openshell-image-builder
+OPENSHELL_IMAGE_BUILDER_CONFIG=/path/to/config.toml openshell-image-builder myimage:latest
 ```
 
 Enable verbose logging to trace which config file is loaded:
 
 ```sh
-openshell-image-builder -v
+openshell-image-builder -v myimage:latest
 ```

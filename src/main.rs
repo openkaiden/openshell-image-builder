@@ -14,6 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod build;
 mod config;
 mod containerfile;
 
@@ -29,6 +30,8 @@ use log::LevelFilter;
     about = "OpenShell image builder"
 )]
 struct Cli {
+    #[arg(help = "Tag for the built image (e.g. myimage:latest)")]
+    tag: String,
     #[arg(
         long,
         env = "OPENSHELL_IMAGE_BUILDER_CONFIG",
@@ -61,7 +64,10 @@ fn main() {
         eprintln!("Error generating Containerfile: {e}");
         std::process::exit(1);
     });
-    print!("{output}");
+    build::build(&output, &cli.tag, &build::PodmanRunner).unwrap_or_else(|e| {
+        eprintln!("Error building image: {e}");
+        std::process::exit(1);
+    });
 }
 
 #[cfg(test)]
