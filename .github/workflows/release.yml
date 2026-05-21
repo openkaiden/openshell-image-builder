@@ -21,7 +21,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-26
           - target: x86_64-pc-windows-msvc
-            runner: windows-2025
+            runner: windows-2025-vs2026
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
