@@ -63,6 +63,17 @@ jobs:
           path: artifacts
           merge-multiple: false
 
+      - name: Rename artifacts with platform suffix
+        run: |
+          for dir in artifacts/*/; do
+            platform=$(basename "$dir")
+            if [ -f "$dir/openshell-image-builder.exe" ]; then
+              mv "$dir/openshell-image-builder.exe" "$dir/$platform.exe"
+            elif [ -f "$dir/openshell-image-builder" ]; then
+              mv "$dir/openshell-image-builder" "$dir/$platform"
+            fi
+          done
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
