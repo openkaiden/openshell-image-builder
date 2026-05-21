@@ -174,4 +174,65 @@ tag = "24.04"
         writeln!(f, "not valid toml [[[").unwrap();
         assert!(load(Some(f.path().to_path_buf())).is_err());
     }
+
+    #[test]
+    fn load_returns_error_when_required_section_missing() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "[some_other_section]\nkey = \"value\"").unwrap();
+        assert!(load(Some(f.path().to_path_buf())).is_err());
+    }
+
+    #[test]
+    fn load_parses_toml_with_only_version() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "[openshell_image_builder]\nversion = 2").unwrap();
+        let config = load(Some(f.path().to_path_buf())).unwrap();
+        assert_eq!(config.version, 2);
+        assert_eq!(config.base_image, BaseImageConfig::default());
+    }
+
+    #[test]
+    fn load_parses_toml_with_only_base_image() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "[openshell_image_builder.base_image]\nimage = \"ubuntu\"\ntag = \"24.04\""
+        )
+        .unwrap();
+        let config = load(Some(f.path().to_path_buf())).unwrap();
+        assert_eq!(config.version, 1);
+        assert_eq!(config.base_image.image, "ubuntu");
+        assert_eq!(config.base_image.tag, "24.04");
+    }
+
+    #[test]
+    fn load_parses_toml_with_only_image_in_base_image() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "[openshell_image_builder.base_image]\nimage = \"centos\""
+        )
+        .unwrap();
+        let config = load(Some(f.path().to_path_buf())).unwrap();
+        assert_eq!(config.version, 1);
+        assert_eq!(config.base_image.image, "centos");
+        assert_eq!(config.base_image.tag, "latest");
+    }
+
+    #[test]
+    fn load_parses_toml_with_only_tag_in_base_image() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "[openshell_image_builder.base_image]\ntag = \"40\"").unwrap();
+        let config = load(Some(f.path().to_path_buf())).unwrap();
+        assert_eq!(config.version, 1);
+        assert_eq!(config.base_image.image, "fedora");
+        assert_eq!(config.base_image.tag, "40");
+    }
+
+    #[test]
+    fn load_with_no_explicit_path_returns_ok() {
+        // Exercises the XDG config-directory lookup; result is environment-dependent
+        // but must always be Ok (either defaults or a valid XDG config).
+        assert!(load(None).is_ok());
+    }
 }
