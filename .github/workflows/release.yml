@@ -35,6 +35,7 @@ jobs:
         run: cargo install cargo-edit --locked
 
       - name: Set version from tag
+        shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
           cargo set-version "${VERSION#v}"
