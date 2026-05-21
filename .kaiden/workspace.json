@@ -1,0 +1,6 @@
+{
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "./features/cargo-llvm-cov": {}
+  }
+}

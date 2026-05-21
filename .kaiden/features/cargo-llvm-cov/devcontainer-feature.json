@@ -1,0 +1,12 @@
+{
+  "id": "cargo-llvm-cov",
+  "version": "1.0.0",
+  "name": "cargo-llvm-cov",
+  "description": "Installs cargo-llvm-cov for LLVM-based code coverage",
+  "containerEnv": {
+    "CARGO_HOME": "/home/agent/.cargo"
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/rust"
+  ]
+}
