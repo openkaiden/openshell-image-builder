@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            use_cross: true
+          - target: x86_64-apple-darwin
+            runner: macos-26
+          - target: aarch64-apple-darwin
+            runner: macos-26
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross == true
+        run: cargo install cross --locked
+
+      - name: Build
+        if: matrix.use_cross != true
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use_cross == true
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openshell-image-builder-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/openshell-image-builder${{ matrix.target == 'x86_64-pc-windows-msvc' && '.exe' || '' }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/**/*
+
+  bump-next-version:
+    name: Bump Next Version
+    runs-on: ubuntu-24.04
+    needs: release
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Install cargo-edit
+        run: cargo install cargo-edit --locked
+
+      - name: Compute next version
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0-next"
+          echo "next_version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Bump version
+        run: cargo set-version "${{ steps.version.outputs.next_version }}"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="bump-next-${{ steps.version.outputs.next_version }}"
+          git checkout -b "$BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump version to ${{ steps.version.outputs.next_version }}"
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create \
+            --title "chore: bump version to ${{ steps.version.outputs.next_version }}" \
+            --body "Bump version to \`${{ steps.version.outputs.next_version }}\` after release \`${{ github.ref_name }}\`." \
+            --base main \
+            --head "$BRANCH")
+          echo "Pull request created: ${PR_URL}"
+          gh pr ready "${PR_URL}"
+          gh pr merge "${PR_URL}" --auto --rebase
