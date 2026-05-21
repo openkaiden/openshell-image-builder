@@ -128,7 +128,7 @@ mod tests {
     fn default_config() {
         let config = Config::default();
         assert_eq!(config.version, 1);
-        assert_eq!(config.base_image.image, "fedora");
+        assert_eq!(config.base_image.image, "ubuntu");
         assert_eq!(config.base_image.tag, "latest");
     }
 
@@ -225,7 +225,7 @@ tag = "24.04"
         writeln!(f, "[openshell_image_builder.base_image]\ntag = \"40\"").unwrap();
         let config = load(Some(f.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 1);
-        assert_eq!(config.base_image.image, "fedora");
+        assert_eq!(config.base_image.image, "ubuntu");
         assert_eq!(config.base_image.tag, "40");
     }
 
