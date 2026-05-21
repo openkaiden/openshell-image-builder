@@ -45,7 +45,7 @@ fn default_version() -> u32 {
 }
 
 fn default_image() -> String {
-    "fedora".to_string()
+    "ubuntu".to_string()
 }
 
 fn default_tag() -> String {
