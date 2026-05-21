@@ -1,6 +1,6 @@
 [package]
 name = "openshell-image-builder"
-version = "0.4.0-next"
+version = "0.6.0-next"
 edition = "2024"
 
 [dependencies]
