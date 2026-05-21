@@ -1,5 +1,7 @@
 # openshell-image-builder
 
+[![codecov](https://codecov.io/gh/feloy/openshell-image-builder/branch/main/graph/badge.svg)](https://codecov.io/gh/feloy/openshell-image-builder)
+
 CLI tool to build OpenShell images.
 
 ## Configuration
