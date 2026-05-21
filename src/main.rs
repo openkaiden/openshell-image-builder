@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod config;
+mod containerfile;
 
 use std::path::PathBuf;
 
@@ -52,10 +53,15 @@ fn main() {
         _ => LevelFilter::Debug,
     };
     env_logger::Builder::new().filter_level(log_level).init();
-    let _config = config::load(cli.config).unwrap_or_else(|e| {
+    let config = config::load(cli.config).unwrap_or_else(|e| {
         eprintln!("Error reading config file: {e}");
         std::process::exit(1);
     });
+    let output = containerfile::generate(&config).unwrap_or_else(|e| {
+        eprintln!("Error generating Containerfile: {e}");
+        std::process::exit(1);
+    });
+    print!("{output}");
 }
 
 #[cfg(test)]
