@@ -14,7 +14,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod config;
+
+use std::path::PathBuf;
+
 use clap::Parser;
+use log::LevelFilter;
 
 #[derive(Parser)]
 #[command(
@@ -22,10 +27,35 @@ use clap::Parser;
     version,
     about = "OpenShell image builder"
 )]
-struct Cli {}
+struct Cli {
+    #[arg(
+        long,
+        env = "OPENSHELL_IMAGE_BUILDER_CONFIG",
+        help = "Path to config file"
+    )]
+    config: Option<PathBuf>,
+    #[arg(
+        short = 'v',
+        action = clap::ArgAction::Count,
+        help = "Increase log verbosity (-v info, -vv debug)"
+    )]
+    verbose: u8,
+}
 
 fn main() {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
+    // TODO: when JSON output is added, logs written to stderr may interfere with
+    // structured output — revisit whether logs should be suppressed or embedded in the JSON.
+    let log_level = match cli.verbose {
+        0 => LevelFilter::Warn,
+        1 => LevelFilter::Info,
+        _ => LevelFilter::Debug,
+    };
+    env_logger::Builder::new().filter_level(log_level).init();
+    let _config = config::load(cli.config).unwrap_or_else(|e| {
+        eprintln!("Error reading config file: {e}");
+        std::process::exit(1);
+    });
 }
 
 #[cfg(test)]
