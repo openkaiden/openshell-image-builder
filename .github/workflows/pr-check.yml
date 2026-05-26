@@ -55,7 +55,7 @@ jobs:
 
       - name: Install cargo-llvm-cov
         if: matrix.os == 'ubuntu-24.04'
-        uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
           tool: cargo-llvm-cov
 
