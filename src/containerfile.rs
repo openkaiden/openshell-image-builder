@@ -50,7 +50,7 @@ fn ubuntu(config: &Config, agent: Option<&dyn Agent>) -> String {
         .unwrap_or_default();
     format!(
         r#"# System base
-FROM nvcr.io/nvidia/base/ubuntu:{tag} AS system
+FROM docker.io/library/ubuntu:{tag} AS system
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -137,13 +137,13 @@ mod tests {
     fn ubuntu_containerfile_contains_tag() {
         let config = ubuntu_config("noble-20251013");
         let content = generate(&config, None).unwrap();
-        assert!(content.contains("FROM nvcr.io/nvidia/base/ubuntu:noble-20251013 AS system"));
+        assert!(content.contains("FROM docker.io/library/ubuntu:noble-20251013 AS system"));
     }
 
     #[test]
     fn ubuntu_containerfile_tag_is_substituted() {
         let content = generate(&ubuntu_config("24.04"), None).unwrap();
-        assert!(content.contains("FROM nvcr.io/nvidia/base/ubuntu:24.04 AS system"));
+        assert!(content.contains("FROM docker.io/library/ubuntu:24.04 AS system"));
         assert!(!content.contains("{tag}"));
     }
 

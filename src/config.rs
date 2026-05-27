@@ -49,7 +49,7 @@ fn default_image() -> String {
 }
 
 fn default_tag() -> String {
-    "noble-20251013".to_string()
+    "24.04".to_string()
 }
 
 impl Default for Config {
@@ -129,7 +129,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.version, 1);
         assert_eq!(config.base_image.image, "ubuntu");
-        assert_eq!(config.base_image.tag, "noble-20251013");
+        assert_eq!(config.base_image.tag, "24.04");
     }
 
     #[test]
@@ -216,7 +216,7 @@ tag = "24.04"
         let config = load(Some(f.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.base_image.image, "centos");
-        assert_eq!(config.base_image.tag, "noble-20251013");
+        assert_eq!(config.base_image.tag, "24.04");
     }
 
     #[test]
