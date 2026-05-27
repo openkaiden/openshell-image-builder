@@ -16,6 +16,7 @@
 
 use crate::agent::Agent;
 use crate::config::Config;
+use crate::feature::StagedFeature;
 
 #[derive(Debug, PartialEq)]
 pub enum ContainerfileError {
@@ -34,21 +35,85 @@ impl std::fmt::Display for ContainerfileError {
 
 impl std::error::Error for ContainerfileError {}
 
-pub fn generate(config: &Config, agent: Option<&dyn Agent>) -> Result<String, ContainerfileError> {
+pub fn generate(
+    config: &Config,
+    agent: Option<&dyn Agent>,
+    features: &[StagedFeature],
+) -> Result<String, ContainerfileError> {
     match config.base_image.image.as_str() {
-        "fedora" => Ok(fedora(config, agent)),
-        "ubuntu" => Ok(ubuntu(config, agent)),
+        "fedora" => Ok(fedora(config, agent, features)),
+        "ubuntu" => Ok(ubuntu(config, agent, features)),
         image => Err(ContainerfileError::NotSupported {
             image: image.to_string(),
         }),
     }
 }
 
-fn ubuntu(config: &Config, agent: Option<&dyn Agent>) -> String {
+/// Renders the feature installation section for the `final` stage.
+///
+/// Each feature's files are COPYed from the build context into the image, then
+/// install.sh is run with options passed as env var assignments. `_REMOTE_USER`
+/// and `_REMOTE_USER_HOME` are set before the block so scripts can resolve the
+/// target user. Each feature's `containerEnv` is set immediately after its
+/// install so subsequent features can reference it.
+fn features_section(features: &[StagedFeature]) -> String {
+    if features.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str("ENV _REMOTE_USER=\"sandbox\"\n");
+    out.push_str("ENV _REMOTE_USER_HOME=\"/sandbox\"\n");
+
+    for feature in features {
+        out.push('\n');
+        out.push_str(&format!("# Feature: {}\n", feature.id));
+
+        let install_dir = format!("/tmp/feature-install/{}", feature.dir_name);
+        out.push_str(&format!(
+            "COPY features/{}/ {install_dir}/\n",
+            feature.dir_name
+        ));
+
+        // Build sorted option assignments: VAR="value" (embedded " escaped).
+        let mut opt_pairs: Vec<(&String, &String)> = feature.merged_options.iter().collect();
+        opt_pairs.sort_by_key(|(k, _)| k.as_str());
+        let opts_prefix = if opt_pairs.is_empty() {
+            String::new()
+        } else {
+            let opts = opt_pairs
+                .iter()
+                .map(|(k, v)| format!("{}=\"{}\"", k, v.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{opts} ")
+        };
+
+        out.push_str(&format!(
+            "RUN chmod +x {install_dir}/install.sh && \\\n    {opts_prefix}{install_dir}/install.sh\n"
+        ));
+
+        // containerEnv: one ENV per variable, sorted, double-quoted.
+        if !feature.container_env.is_empty() {
+            let mut env_pairs: Vec<(&String, &String)> = feature.container_env.iter().collect();
+            env_pairs.sort_by_key(|(k, _)| k.as_str());
+            for (k, v) in env_pairs {
+                let escaped = v.replace('"', "\\\"");
+                out.push_str(&format!("ENV {k}=\"{escaped}\"\n"));
+            }
+        }
+    }
+    out.push_str("RUN rm -rf /tmp/feature-install\n");
+    out.push('\n');
+    out
+}
+
+fn ubuntu(config: &Config, agent: Option<&dyn Agent>, features: &[StagedFeature]) -> String {
     let tag = &config.base_image.tag;
     let agent_section = agent
         .map(|a| format!("{}\n\n", a.install()))
         .unwrap_or_default();
+    let features_section = features_section(features);
     format!(
         r#"# System base
 FROM docker.io/library/ubuntu:{tag} AS system
@@ -81,7 +146,7 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 # Final base image
 FROM system AS final
 
-RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
+{features_section}RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
         > /sandbox/.bashrc && \
     printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
@@ -94,11 +159,12 @@ USER sandbox
     )
 }
 
-fn fedora(config: &Config, agent: Option<&dyn Agent>) -> String {
+fn fedora(config: &Config, agent: Option<&dyn Agent>, features: &[StagedFeature]) -> String {
     let tag = &config.base_image.tag;
     let agent_section = agent
         .map(|a| format!("{}\n\n", a.install()))
         .unwrap_or_default();
+    let features_section = features_section(features);
     format!(
         r#"# System base
 FROM registry.fedoraproject.org/fedora:{tag} AS system
@@ -131,7 +197,7 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 # Final base image
 FROM system AS final
 
-RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
+{features_section}RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
         > /sandbox/.bashrc && \
     printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
@@ -178,35 +244,44 @@ mod tests {
         }
     }
 
+    fn mock_feature(id: &str, dir_name: &str) -> StagedFeature {
+        StagedFeature {
+            id: id.to_string(),
+            dir_name: dir_name.to_string(),
+            merged_options: std::collections::HashMap::new(),
+            container_env: std::collections::HashMap::new(),
+        }
+    }
+
     #[test]
     fn ubuntu_generates_successfully() {
         let config = ubuntu_config("noble-20251013");
-        assert!(generate(&config, None).is_ok());
+        assert!(generate(&config, None, &[]).is_ok());
     }
 
     #[test]
     fn ubuntu_containerfile_contains_tag() {
         let config = ubuntu_config("noble-20251013");
-        let content = generate(&config, None).unwrap();
+        let content = generate(&config, None, &[]).unwrap();
         assert!(content.contains("FROM docker.io/library/ubuntu:noble-20251013 AS system"));
     }
 
     #[test]
     fn ubuntu_containerfile_tag_is_substituted() {
-        let content = generate(&ubuntu_config("24.04"), None).unwrap();
+        let content = generate(&ubuntu_config("24.04"), None, &[]).unwrap();
         assert!(content.contains("FROM docker.io/library/ubuntu:24.04 AS system"));
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn ubuntu_with_agent_includes_install() {
-        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent)).unwrap();
+        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent), &[]).unwrap();
         assert!(content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn ubuntu_agent_install_runs_as_sandbox_user() {
-        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent)).unwrap();
+        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent), &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let install_pos = content.find("RUN echo mock-agent").unwrap();
         assert!(
@@ -217,36 +292,36 @@ mod tests {
 
     #[test]
     fn ubuntu_without_agent_omits_install() {
-        let content = generate(&ubuntu_config("noble-20251013"), None).unwrap();
+        let content = generate(&ubuntu_config("noble-20251013"), None, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn fedora_generates_successfully() {
-        assert!(generate(&fedora_config(), None).is_ok());
+        assert!(generate(&fedora_config(), None, &[]).is_ok());
     }
 
     #[test]
     fn fedora_containerfile_contains_tag() {
-        let content = generate(&fedora_config(), None).unwrap();
+        let content = generate(&fedora_config(), None, &[]).unwrap();
         assert!(content.contains("FROM registry.fedoraproject.org/fedora:latest AS system"));
     }
 
     #[test]
     fn fedora_containerfile_tag_is_substituted() {
-        let content = generate(&fedora_config(), None).unwrap();
+        let content = generate(&fedora_config(), None, &[]).unwrap();
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn fedora_with_agent_includes_install() {
-        let content = generate(&fedora_config(), Some(&MockAgent)).unwrap();
+        let content = generate(&fedora_config(), Some(&MockAgent), &[]).unwrap();
         assert!(content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn fedora_agent_install_runs_as_sandbox_user() {
-        let content = generate(&fedora_config(), Some(&MockAgent)).unwrap();
+        let content = generate(&fedora_config(), Some(&MockAgent), &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let install_pos = content.find("RUN echo mock-agent").unwrap();
         assert!(
@@ -257,7 +332,7 @@ mod tests {
 
     #[test]
     fn fedora_without_agent_omits_install() {
-        let content = generate(&fedora_config(), None).unwrap();
+        let content = generate(&fedora_config(), None, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
@@ -278,12 +353,87 @@ mod tests {
                 tag: "latest".to_string(),
             },
         };
-        let err = generate(&config, None).unwrap_err();
+        let err = generate(&config, None, &[]).unwrap_err();
         assert_eq!(
             err,
             ContainerfileError::NotSupported {
                 image: "centos".to_string()
             }
         );
+    }
+
+    #[test]
+    fn feature_section_appears_before_profile_setup() {
+        let feature = mock_feature("./tools/my-feature", "feature-0");
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        let feature_pos = content.find("# Feature:").unwrap();
+        let profile_pos = content.find("printf 'export PS1").unwrap();
+        assert!(
+            feature_pos < profile_pos,
+            "feature block must appear before profile setup"
+        );
+    }
+
+    #[test]
+    fn feature_copy_instruction_present() {
+        let feature = mock_feature("./tools/my-feature", "feature-0");
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        assert!(content.contains("COPY features/feature-0/"));
+        assert!(content.contains("/tmp/feature-install/feature-0/install.sh"));
+    }
+
+    #[test]
+    fn feature_remote_user_env_vars_set() {
+        let feature = mock_feature("./tools/my-feature", "feature-0");
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        assert!(content.contains("_REMOTE_USER=\"sandbox\""));
+        assert!(content.contains("_REMOTE_USER_HOME=\"/sandbox\""));
+    }
+
+    #[test]
+    fn feature_options_in_run_command() {
+        let mut feature = mock_feature("./tools/my-feature", "feature-0");
+        feature
+            .merged_options
+            .insert("VERSION".to_string(), "1.0".to_string());
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        assert!(content.contains("VERSION=\"1.0\""));
+    }
+
+    #[test]
+    fn feature_container_env_emitted_as_env_instruction() {
+        let mut feature = mock_feature("./tools/my-feature", "feature-0");
+        feature
+            .container_env
+            .insert("CARGO_HOME".to_string(), "/home/sandbox/.cargo".to_string());
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        assert!(content.contains("ENV CARGO_HOME=\"/home/sandbox/.cargo\""));
+    }
+
+    #[test]
+    fn feature_block_before_user_sandbox() {
+        let feature = mock_feature("./tools/my-feature", "feature-0");
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        let feature_pos = content.find("# Feature:").unwrap();
+        let user_sandbox_pos = content.find("USER sandbox").unwrap();
+        assert!(
+            feature_pos < user_sandbox_pos,
+            "feature must be installed before USER sandbox"
+        );
+    }
+
+    #[test]
+    fn feature_install_dir_cleaned_up() {
+        let feature = mock_feature("./tools/my-feature", "feature-0");
+        let content = generate(&ubuntu_config("24.04"), None, &[feature]).unwrap();
+        assert!(content.contains("RUN rm -rf /tmp/feature-install\n"));
+    }
+
+    #[test]
+    fn no_features_produces_same_output_as_before() {
+        let with_empty = generate(&ubuntu_config("24.04"), None, &[]).unwrap();
+        assert!(!with_empty.contains("# Feature:"));
+        assert!(!with_empty.contains("_REMOTE_USER"));
+        assert!(!with_empty.contains("rm -rf /tmp/feature-install"));
     }
 }

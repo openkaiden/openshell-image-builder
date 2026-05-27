@@ -18,6 +18,8 @@ mod agent;
 mod build;
 mod config;
 mod containerfile;
+mod feature;
+mod workspace;
 
 use std::path::PathBuf;
 
@@ -63,12 +65,28 @@ fn main() {
         eprintln!("Error reading config file: {e}");
         std::process::exit(1);
     });
-    let agent = cli.agent.map(agent::from_kind);
-    let output = containerfile::generate(&config, agent.as_deref()).unwrap_or_else(|e| {
-        eprintln!("Error generating Containerfile: {e}");
+    let workspace = workspace::load().unwrap_or_else(|e| {
+        eprintln!("Error reading workspace file: {e}");
         std::process::exit(1);
     });
-    build::build(&output, &cli.tag, &build::PodmanRunner).unwrap_or_else(|e| {
+    let agent = cli.agent.map(agent::from_kind);
+    let context_dir = tempfile::Builder::new()
+        .prefix("openshell-image-builder")
+        .tempdir()
+        .unwrap_or_else(|e| {
+            eprintln!("Error creating build context directory: {e}");
+            std::process::exit(1);
+        });
+    let features = feature::stage_all(workspace.as_ref(), context_dir.path()).unwrap_or_else(|e| {
+        eprintln!("Error staging features: {e}");
+        std::process::exit(1);
+    });
+    let output =
+        containerfile::generate(&config, agent.as_deref(), &features).unwrap_or_else(|e| {
+            eprintln!("Error generating Containerfile: {e}");
+            std::process::exit(1);
+        });
+    build::build(&output, &cli.tag, &build::PodmanRunner, context_dir.path()).unwrap_or_else(|e| {
         eprintln!("Error building image: {e}");
         std::process::exit(1);
     });

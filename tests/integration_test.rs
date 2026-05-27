@@ -199,6 +199,350 @@ image_tests!(fedora,        fedora_image,        has_claude: false);
 image_tests!(fedora_claude, fedora_claude_image, has_claude: true);
 
 // ---------------------------------------------------------------------------
+// Workspace helpers for feature-based builds
+// ---------------------------------------------------------------------------
+
+fn workspace_dir(workspace_json: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let kaiden = dir.path().join(".kaiden");
+    std::fs::create_dir_all(&kaiden).unwrap();
+    std::fs::write(kaiden.join("workspace.json"), workspace_json).unwrap();
+    dir
+}
+
+fn build_image_with_workspace(tag: &str, workspace_json: &str, extra_args: &[&str]) -> String {
+    let dir = workspace_dir(workspace_json);
+    let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+    let status = Command::new(binary)
+        .current_dir(dir.path())
+        .args(extra_args)
+        .arg(tag)
+        .status()
+        .expect("binary should run");
+    assert!(status.success(), "image build failed for tag {tag}");
+    tag.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Feature image singletons — ubuntu (default) and fedora variants
+// ---------------------------------------------------------------------------
+
+static FEATURE_COMMON_UTILS_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_NODE_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_PYTHON_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_COMMON_UTILS_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_NODE_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_PYTHON_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_LOCAL_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_LOCAL_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+
+const COMMON_UTILS_WORKSPACE: &str = r#"{
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "installZsh": true
+        }
+    }
+}"#;
+
+const NODE_WORKSPACE: &str = r#"{
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "22"
+        }
+    }
+}"#;
+
+const PYTHON_WORKSPACE: &str = r#"{
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "os-provided",
+            "installTools": true
+        }
+    }
+}"#;
+
+fn feature_common_utils_ubuntu_image() -> &'static str {
+    FEATURE_COMMON_UTILS_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_with_workspace(
+            "openshell-test-feature-common-utils-ubuntu:integration",
+            COMMON_UTILS_WORKSPACE,
+            &[],
+        )
+    })
+}
+
+fn feature_node_ubuntu_image() -> &'static str {
+    FEATURE_NODE_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_with_workspace(
+            "openshell-test-feature-node-ubuntu:integration",
+            NODE_WORKSPACE,
+            &[],
+        )
+    })
+}
+
+fn feature_python_ubuntu_image() -> &'static str {
+    FEATURE_PYTHON_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_with_workspace(
+            "openshell-test-feature-python-ubuntu:integration",
+            PYTHON_WORKSPACE,
+            &[],
+        )
+    })
+}
+
+fn feature_common_utils_fedora_image() -> &'static str {
+    FEATURE_COMMON_UTILS_FEDORA_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image_with_workspace(
+            "openshell-test-feature-common-utils-fedora:integration",
+            COMMON_UTILS_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn feature_node_fedora_image() -> &'static str {
+    FEATURE_NODE_FEDORA_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image_with_workspace(
+            "openshell-test-feature-node-fedora:integration",
+            NODE_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn feature_python_fedora_image() -> &'static str {
+    FEATURE_PYTHON_FEDORA_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image_with_workspace(
+            "openshell-test-feature-python-fedora:integration",
+            PYTHON_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn local_feature_workspace_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let kaiden = dir.path().join(".kaiden");
+    let feature_dir = kaiden.join("my-feature");
+    std::fs::create_dir_all(&feature_dir).unwrap();
+    std::fs::write(
+        kaiden.join("workspace.json"),
+        r#"{"features": {"./my-feature": {"filename": "hello-from-feature"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        feature_dir.join("devcontainer-feature.json"),
+        r#"{"id": "my-feature", "version": "1.0.0", "name": "My Test Feature", "options": {"filename": {"type": "string", "default": "default-filename"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        feature_dir.join("install.sh"),
+        "#!/bin/sh\nsh \"$(dirname \"$0\")/main.sh\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        feature_dir.join("main.sh"),
+        "#!/bin/sh\ntouch \"$_REMOTE_USER_HOME/$FILENAME\"\n",
+    )
+    .unwrap();
+    dir
+}
+
+fn build_image_with_local_feature(tag: &str, extra_args: &[&str]) -> String {
+    let dir = local_feature_workspace_dir();
+    let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+    let status = Command::new(binary)
+        .current_dir(dir.path())
+        .args(extra_args)
+        .arg(tag)
+        .status()
+        .expect("binary should run");
+    assert!(status.success(), "image build failed for tag {tag}");
+    tag.to_string()
+}
+
+fn feature_local_ubuntu_image() -> &'static str {
+    FEATURE_LOCAL_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_with_local_feature("openshell-test-feature-local-ubuntu:integration", &[])
+    })
+}
+
+fn feature_local_fedora_image() -> &'static str {
+    FEATURE_LOCAL_FEDORA_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image_with_local_feature(
+            "openshell-test-feature-local-fedora:integration",
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Feature integration tests — one macro per feature, instantiated per base image
+// ---------------------------------------------------------------------------
+
+macro_rules! feature_common_utils_tests {
+    ($mod_name:ident, $image_fn:ident, $base_image_fn:ident) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            #[ignore]
+            fn zsh_installed() {
+                let out = run_in_image($image_fn(), "which zsh");
+                assert!(out.status.success(), "zsh not found in image");
+            }
+
+            #[test]
+            #[ignore]
+            fn zsh_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "which zsh");
+                assert!(!out.status.success(), "zsh should not be in base image");
+            }
+        }
+    };
+}
+
+macro_rules! feature_node_tests {
+    ($mod_name:ident, $image_fn:ident, $base_image_fn:ident) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            #[ignore]
+            fn node_in_path() {
+                let out = run_in_image($image_fn(), "node --version");
+                assert!(out.status.success(), "node not found in PATH");
+            }
+
+            #[test]
+            #[ignore]
+            fn node_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "which node");
+                assert!(!out.status.success(), "node should not be in base image");
+            }
+
+            #[test]
+            #[ignore]
+            fn npm_in_path() {
+                let out = run_in_image($image_fn(), "npm --version");
+                assert!(out.status.success(), "npm not found in PATH");
+            }
+
+            #[test]
+            #[ignore]
+            fn npm_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "which npm");
+                assert!(!out.status.success(), "npm should not be in base image");
+            }
+        }
+    };
+}
+
+macro_rules! feature_python_tests {
+    ($mod_name:ident, $image_fn:ident, $base_image_fn:ident) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            #[ignore]
+            fn python3_available() {
+                let out = run_in_image($image_fn(), "python3 --version");
+                assert!(out.status.success(), "python3 not found in image");
+            }
+
+            #[test]
+            #[ignore]
+            fn flake8_installed() {
+                let out = run_in_image($image_fn(), "which flake8");
+                assert!(out.status.success(), "flake8 not found in PATH");
+            }
+
+            #[test]
+            #[ignore]
+            fn flake8_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "which flake8");
+                assert!(!out.status.success(), "flake8 should not be in base image");
+            }
+
+            #[test]
+            #[ignore]
+            fn pylint_installed() {
+                let out = run_in_image($image_fn(), "which pylint");
+                assert!(out.status.success(), "pylint not found in PATH");
+            }
+
+            #[test]
+            #[ignore]
+            fn pylint_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "which pylint");
+                assert!(!out.status.success(), "pylint should not be in base image");
+            }
+        }
+    };
+}
+
+macro_rules! feature_local_tests {
+    ($mod_name:ident, $image_fn:ident, $base_image_fn:ident) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            #[ignore]
+            fn file_created_by_feature() {
+                let out = run_in_image($image_fn(), "test -f /sandbox/hello-from-feature");
+                assert!(out.status.success(), "file not created by local feature");
+            }
+
+            #[test]
+            #[ignore]
+            fn file_not_in_base_image() {
+                let out = run_in_image($base_image_fn(), "test -f /sandbox/hello-from-feature");
+                assert!(!out.status.success(), "file should not exist in base image");
+            }
+        }
+    };
+}
+
+feature_local_tests!(
+    feature_local_ubuntu,
+    feature_local_ubuntu_image,
+    ubuntu_image
+);
+feature_local_tests!(
+    feature_local_fedora,
+    feature_local_fedora_image,
+    fedora_image
+);
+
+feature_common_utils_tests!(
+    feature_common_utils_ubuntu,
+    feature_common_utils_ubuntu_image,
+    ubuntu_image
+);
+feature_common_utils_tests!(
+    feature_common_utils_fedora,
+    feature_common_utils_fedora_image,
+    fedora_image
+);
+feature_node_tests!(feature_node_ubuntu, feature_node_ubuntu_image, ubuntu_image);
+feature_node_tests!(feature_node_fedora, feature_node_fedora_image, fedora_image);
+feature_python_tests!(
+    feature_python_ubuntu,
+    feature_python_ubuntu_image,
+    ubuntu_image
+);
+feature_python_tests!(
+    feature_python_fedora,
+    feature_python_fedora_image,
+    fedora_image
+);
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -209,6 +553,14 @@ fn cleanup_images() {
         "openshell-test-ubuntu-claude:integration",
         "openshell-test-fedora:integration",
         "openshell-test-fedora-claude:integration",
+        "openshell-test-feature-common-utils-ubuntu:integration",
+        "openshell-test-feature-node-ubuntu:integration",
+        "openshell-test-feature-python-ubuntu:integration",
+        "openshell-test-feature-common-utils-fedora:integration",
+        "openshell-test-feature-node-fedora:integration",
+        "openshell-test-feature-python-fedora:integration",
+        "openshell-test-feature-local-ubuntu:integration",
+        "openshell-test-feature-local-fedora:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])

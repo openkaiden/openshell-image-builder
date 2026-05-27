@@ -76,3 +76,68 @@ Install the Claude agent in the image:
 ```sh
 openshell-image-builder --agent claude myimage:latest
 ```
+
+## Dev Container Features
+
+The tool supports [Dev Container Features](https://containers.dev/implementors/features/) declared in `.kaiden/workspace.json` in the current directory.
+
+### workspace.json schema
+
+```json
+{
+  "features": {
+    "<feature-ref>": {
+      "<option>": "<value>"
+    }
+  }
+}
+```
+
+Each key in `features` is a feature reference; each value is a map of options passed to the feature's `install.sh`.
+
+### Feature references
+
+| Format | Example | Resolves to |
+| --- | --- | --- |
+| OCI registry reference | `ghcr.io/devcontainers/features/rust:1` | downloaded from registry |
+| Local path | `./my-feature` | `.kaiden/my-feature/` |
+
+Local paths are resolved relative to `.kaiden/`: `./my-feature` points to `.kaiden/my-feature/`.
+
+OCI references without an explicit registry default to `ghcr.io`. Tags and digests (`@sha256:…`) are both supported. Direct `http://` / `https://` tarball URLs are not supported.
+
+### Installation order
+
+Features are installed in the order defined by each feature's `installsAfter` field in its `devcontainer-feature.json`. Within the same dependency level, features are processed in alphabetical order by reference.
+
+### Example
+
+```json
+{
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "stable",
+      "profile": "minimal"
+    },
+    "./my-feature": {}
+  }
+}
+```
+
+With the above, `./my-feature` refers to a local feature at `.kaiden/my-feature/`.
+
+### How it works
+
+When `.kaiden/workspace.json` is present, the tool:
+
+1. Downloads and extracts each OCI feature into a temporary build context directory (`/tmp/openshell-image-builder…`).
+2. Copies local feature directories into the same build context.
+3. Passes the build context to `podman build`, where each feature is installed via:
+   ```dockerfile
+   COPY features/<dir>/ /tmp/feature-install/<dir>/
+   RUN chmod +x /tmp/feature-install/<dir>/install.sh && \
+       OPTION="value" /tmp/feature-install/<dir>/install.sh
+   ```
+4. Cleans up all feature files from the image with `RUN rm -rf /tmp/feature-install` after all features are installed.
+
+Features run as root so install scripts can write to system paths.

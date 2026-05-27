@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, ExitStatus};
 
 use tempfile::NamedTempFile;
@@ -66,20 +67,26 @@ impl From<std::io::Error> for BuildError {
     }
 }
 
-pub fn build(containerfile: &str, tag: &str, runner: &impl Runner) -> Result<(), BuildError> {
+pub fn build(
+    containerfile: &str,
+    tag: &str,
+    runner: &impl Runner,
+    context_dir: &Path,
+) -> Result<(), BuildError> {
     let mut tmpfile = NamedTempFile::new()?;
     tmpfile.write_all(containerfile.as_bytes())?;
 
     log::debug!(
-        "running: podman build -f {} -t {tag} .",
-        tmpfile.path().display()
+        "running: podman build -f {} -t {tag} {}",
+        tmpfile.path().display(),
+        context_dir.display()
     );
 
     let mut cmd = Command::new("podman");
     cmd.args(["build", "-f"])
         .arg(tmpfile.path())
         .args(["-t", tag])
-        .arg(".");
+        .arg(context_dir);
 
     let status = runner.run(&mut cmd)?;
 
@@ -118,13 +125,13 @@ mod tests {
     #[test]
     fn build_succeeds() {
         let runner = FakeRunner(|| Ok(exit_with(0)));
-        assert!(build(CONTAINERFILE, TAG, &runner).is_ok());
+        assert!(build(CONTAINERFILE, TAG, &runner, Path::new(".")).is_ok());
     }
 
     #[test]
     fn build_fails_with_exit_code() {
         let runner = FakeRunner(|| Ok(exit_with(1)));
-        let err = build(CONTAINERFILE, TAG, &runner).unwrap_err();
+        let err = build(CONTAINERFILE, TAG, &runner, Path::new(".")).unwrap_err();
         assert!(matches!(err, BuildError::Failed { exit_code: Some(1) }));
     }
 
@@ -132,7 +139,7 @@ mod tests {
     fn build_propagates_io_error() {
         let runner =
             FakeRunner(|| Err(io::Error::new(io::ErrorKind::NotFound, "podman not found")));
-        let err = build(CONTAINERFILE, TAG, &runner).unwrap_err();
+        let err = build(CONTAINERFILE, TAG, &runner, Path::new(".")).unwrap_err();
         assert!(matches!(err, BuildError::Io(_)));
     }
 
@@ -141,7 +148,7 @@ mod tests {
     fn build_signal_killed() {
         use std::os::unix::process::ExitStatusExt;
         let runner = FakeRunner(|| Ok(ExitStatus::from_raw(9)));
-        let err = build(CONTAINERFILE, TAG, &runner).unwrap_err();
+        let err = build(CONTAINERFILE, TAG, &runner, Path::new(".")).unwrap_err();
         assert!(matches!(err, BuildError::Failed { exit_code: None }));
     }
 
