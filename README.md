@@ -205,3 +205,49 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
 | `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`)           |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
+
+## Examples
+
+### Claude Code agent + Anthropic models provider
+
+```
+$ openshell-image-builder \
+  --agent claude \
+  --inference anthropic \
+  sandbox_image:claude_anthropic
+
+$ openshell provider create \
+  --type generic \
+  --credential ANTHROPIC_API_KEY=sk-ant-... \
+  --name claude_anthropic_provider
+
+$ openshell sandbox create \
+  --from sandbox_image:claude_anthropic \
+  --provider claude_anthropic_provider \
+  --upload . \
+  --name claude_anthropic_sandbox \
+  --no-auto-providers \
+  -- claude
+```
+
+### Opencode agent + Anthropic models provider
+
+```
+$ openshell-image-builder \
+  --agent opencode \
+  --inference anthropic \
+  sandbox_image:opencode_anthropic
+
+$ openshell provider create \
+  --type generic \
+  --credential ANTHROPIC_API_KEY=sk-ant-... \
+  --name opencode_anthropic_provider
+
+$ openshell sandbox create \
+  --from sandbox_image:opencode_anthropic \
+  --provider opencode_anthropic_provider \
+  --upload . \
+  --name opencode_anthropic_sandbox \
+  --no-auto-providers \
+  -- opencode
+````
