@@ -56,8 +56,10 @@ fn run_in_image(image: &str, cmd: &str) -> Output {
 
 static UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn ubuntu_image() -> &'static str {
     UBUNTU_IMAGE.get_or_init(|| build_image("openshell-test-ubuntu:integration", &[]))
@@ -92,6 +94,30 @@ fn fedora_claude_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "claude",
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_image() -> &'static str {
+    UBUNTU_OPENCODE_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode:integration",
+            &["--agent", "opencode"],
+        )
+    })
+}
+
+fn fedora_opencode_image() -> &'static str {
+    FEDORA_OPENCODE_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image(
+            "openshell-test-fedora-opencode:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
             ],
         )
     })
@@ -157,12 +183,21 @@ fn check_claude_in_path(image: &str, expected: bool) {
     }
 }
 
+fn check_opencode_in_path(image: &str, expected: bool) {
+    let out = run_in_image(image, "which opencode");
+    if expected {
+        assert!(out.status.success(), "opencode not found in PATH");
+    } else {
+        assert!(!out.status.success(), "opencode should not be in PATH");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Matrix: base_image × agent — one test module per variant
 // ---------------------------------------------------------------------------
 
 macro_rules! image_tests {
-    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal) => {
+    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal) => {
         mod $mod_name {
             use super::*;
 
@@ -189,14 +224,22 @@ macro_rules! image_tests {
             fn claude_in_path() {
                 check_claude_in_path($image_fn(), $has_claude);
             }
+
+            #[test]
+            #[ignore]
+            fn opencode_in_path() {
+                check_opencode_in_path($image_fn(), $has_opencode);
+            }
         }
     };
 }
 
-image_tests!(ubuntu,        ubuntu_image,        has_claude: false);
-image_tests!(ubuntu_claude, ubuntu_claude_image, has_claude: true);
-image_tests!(fedora,        fedora_image,        has_claude: false);
-image_tests!(fedora_claude, fedora_claude_image, has_claude: true);
+image_tests!(ubuntu,          ubuntu_image,          has_claude: false, has_opencode: false);
+image_tests!(ubuntu_claude,   ubuntu_claude_image,   has_claude: true,  has_opencode: false);
+image_tests!(ubuntu_opencode, ubuntu_opencode_image, has_claude: false, has_opencode: true);
+image_tests!(fedora,          fedora_image,          has_claude: false, has_opencode: false);
+image_tests!(fedora_claude,   fedora_claude_image,   has_claude: true,  has_opencode: false);
+image_tests!(fedora_opencode, fedora_opencode_image, has_claude: false, has_opencode: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds
@@ -551,8 +594,10 @@ fn cleanup_images() {
     for tag in [
         "openshell-test-ubuntu:integration",
         "openshell-test-ubuntu-claude:integration",
+        "openshell-test-ubuntu-opencode:integration",
         "openshell-test-fedora:integration",
         "openshell-test-fedora-claude:integration",
+        "openshell-test-fedora-opencode:integration",
         "openshell-test-feature-common-utils-ubuntu:integration",
         "openshell-test-feature-node-ubuntu:integration",
         "openshell-test-feature-python-ubuntu:integration",

@@ -74,10 +74,16 @@ openshell-image-builder -v myimage:latest
 
 ## Installing an agent
 
-Pass `--agent` to install an agent into the image. Currently supported: `claude`.
+Pass `--agent` to install an agent into the image.
+
+| Agent      | Value      | Description                    |
+| ---------- | ---------- | ------------------------------ |
+| Claude Code | `claude`  | Anthropic's Claude Code CLI    |
+| OpenCode   | `opencode` | OpenCode AI coding agent       |
 
 ```sh
 openshell-image-builder --agent claude myimage:latest
+openshell-image-builder --agent opencode myimage:latest
 ```
 
 ## Dev Container Features
@@ -155,5 +161,5 @@ openshell-image-builder [OPTIONS] <TAG>
 | -------------------- | ------------------------------------------------------------- |
 | `<TAG>`              | Tag for the built image (e.g. `myimage:latest`)               |
 | `--config <CONFIG>`  | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`)   |
-| `--agent <AGENT>`    | Agent to install in the image (possible values: `claude`)     |
+| `--agent <AGENT>`    | Agent to install in the image (possible values: `claude`, `opencode`) |
 | `-v` / `-vv`         | Increase log verbosity (info / debug)                         |

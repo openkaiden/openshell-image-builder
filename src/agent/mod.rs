@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod claude;
+mod opencode;
 
 use clap::ValueEnum;
 
@@ -25,11 +26,13 @@ pub trait Agent {
 #[derive(Clone, ValueEnum)]
 pub enum AgentKind {
     Claude,
+    Opencode,
 }
 
 pub fn from_kind(kind: AgentKind) -> Box<dyn Agent> {
     match kind {
         AgentKind::Claude => Box::new(claude::ClaudeAgent),
+        AgentKind::Opencode => Box::new(opencode::OpencodeAgent),
     }
 }
 
@@ -41,5 +44,11 @@ mod tests {
     fn from_kind_claude_installs_claude() {
         let agent = from_kind(AgentKind::Claude);
         assert!(agent.install().contains("https://claude.ai/install.sh"));
+    }
+
+    #[test]
+    fn from_kind_opencode_installs_opencode() {
+        let agent = from_kind(AgentKind::Opencode);
+        assert!(agent.install().contains("https://opencode.ai/install"));
     }
 }
