@@ -21,7 +21,6 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.0.50" }
 dirs = "5"
 env_logger = "0.11"
 flate2 = "1"
@@ -30,6 +29,7 @@ log = "0.4"
 oci-spec = { version = "0.7", features = ["image"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yml = "0.0.12"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"

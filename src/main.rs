@@ -20,6 +20,7 @@ mod config;
 mod containerfile;
 mod feature;
 mod inference;
+mod policy;
 mod workspace;
 
 use std::path::PathBuf;
@@ -108,35 +109,33 @@ fn build_policy(
     agent: Option<&dyn agent::Agent>,
     inference: Option<&dyn inference::Inference>,
 ) -> String {
-    let mut policy = openshell_policy::parse_sandbox_policy(base_yaml).unwrap_or_else(|e| {
+    let mut sandbox_policy = policy::parse_sandbox_policy(base_yaml).unwrap_or_else(|e| {
         eprintln!("Error parsing base policy.yaml: {e}");
         std::process::exit(1);
     });
     if let (Some(inference), Some(agent)) = (inference, agent) {
         let inference_yaml = inference.policy_yaml(agent.binary_path());
-        let inference_policy = openshell_policy::parse_sandbox_policy(&inference_yaml)
-            .unwrap_or_else(|e| {
-                eprintln!("Error parsing inference policy: {e}");
-                std::process::exit(1);
-            });
-        policy
+        let inference_policy = policy::parse_sandbox_policy(&inference_yaml).unwrap_or_else(|e| {
+            eprintln!("Error parsing inference policy: {e}");
+            std::process::exit(1);
+        });
+        sandbox_policy
             .network_policies
             .extend(inference_policy.network_policies);
     }
     if let Some(agent) = agent {
         let agent_yaml = agent.policy_yaml();
         if !agent_yaml.is_empty() {
-            let agent_policy =
-                openshell_policy::parse_sandbox_policy(agent_yaml).unwrap_or_else(|e| {
-                    eprintln!("Error parsing agent policy: {e}");
-                    std::process::exit(1);
-                });
-            policy
+            let agent_policy = policy::parse_sandbox_policy(agent_yaml).unwrap_or_else(|e| {
+                eprintln!("Error parsing agent policy: {e}");
+                std::process::exit(1);
+            });
+            sandbox_policy
                 .network_policies
                 .extend(agent_policy.network_policies);
         }
     }
-    openshell_policy::serialize_sandbox_policy(&policy).unwrap_or_else(|e| {
+    policy::serialize_sandbox_policy(&sandbox_policy).unwrap_or_else(|e| {
         eprintln!("Error serializing policy.yaml: {e}");
         std::process::exit(1);
     })
