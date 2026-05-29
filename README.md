@@ -76,14 +76,27 @@ openshell-image-builder -v myimage:latest
 
 Pass `--agent` to install an agent into the image.
 
-| Agent      | Value      | Description                    |
-| ---------- | ---------- | ------------------------------ |
-| Claude Code | `claude`  | Anthropic's Claude Code CLI    |
-| OpenCode   | `opencode` | OpenCode AI coding agent       |
+| Agent       | Value      | Description                    |
+| ----------- | ---------- | ------------------------------ |
+| Claude Code | `claude`   | Anthropic's Claude Code CLI    |
+| OpenCode    | `opencode` | OpenCode AI coding agent       |
 
 ```sh
 openshell-image-builder --agent claude myimage:latest
 openshell-image-builder --agent opencode myimage:latest
+```
+
+## Configuring inference
+
+Pass `--inference` to allow the agent to reach its LLM backend. This is separate from `--agent` because the same inference provider can serve multiple agents.
+
+| Inference | Value       | Description                         |
+| --------- | ----------- | ----------------------------------- |
+| Anthropic | `anthropic` | Anthropic API (`api.anthropic.com`) |
+
+```sh
+openshell-image-builder --agent claude --inference anthropic myimage:latest
+openshell-image-builder --agent opencode --inference anthropic myimage:latest
 ```
 
 ## Sandbox policy
@@ -93,7 +106,11 @@ Every image built by this tool includes `/etc/openshell/policy.yaml`. This file 
 - **Filesystem policy** — which paths are read-only, read-write, or inaccessible to the `sandbox` user.
 - **Network policies** — which binaries are allowed to connect to which hosts and ports.
 
-The base policy ([`assets/policy.yaml`](assets/policy.yaml)) covers general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`. When `--agent` is passed, the agent's own network policy is merged on top — for example, `--agent claude` adds a `claude_code` policy that allows Claude Code to reach the Anthropic API and GitHub REST API.
+The policy is built in three layers, merged in order:
+
+1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
+2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`.
+3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
 
 ## Dev Container Features
 
@@ -166,9 +183,10 @@ Features run as root so install scripts can write to system paths.
 openshell-image-builder [OPTIONS] <TAG>
 ```
 
-| Argument / Option    | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `<TAG>`              | Tag for the built image (e.g. `myimage:latest`)               |
-| `--config <CONFIG>`  | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`)   |
-| `--agent <AGENT>`    | Agent to install in the image (possible values: `claude`, `opencode`) |
-| `-v` / `-vv`         | Increase log verbosity (info / debug)                         |
+| Argument / Option          | Description                                                        |
+| -------------------------- | ------------------------------------------------------------------ |
+| `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
+| `--config <CONFIG>`        | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`)        |
+| `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
+| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`)           |
+| `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
