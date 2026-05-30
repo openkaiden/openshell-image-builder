@@ -18,6 +18,7 @@ Supported agents:
 Supported inference providers:
 
 - [Anthropic](https://www.anthropic.com) (`--inference anthropic`)
+- [Vertex AI](https://cloud.google.com/vertex-ai) (`--inference vertexai`)
 
 ## Quick start
 
@@ -108,10 +109,13 @@ Pass `--inference` to allow the agent to reach its LLM backend. This is separate
 | Inference | Value       | Description                         |
 | --------- | ----------- | ----------------------------------- |
 | Anthropic | `anthropic` | Anthropic API (`api.anthropic.com`) |
+| Vertex AI | `vertexai`  | Google Vertex AI (`oauth2.googleapis.com`, `aiplatform.googleapis.com`, `*-aiplatform.googleapis.com`) |
 
 ```sh
 openshell-image-builder --agent claude --inference anthropic myimage:latest
 openshell-image-builder --agent opencode --inference anthropic myimage:latest
+openshell-image-builder --agent claude --inference vertexai myimage:latest
+openshell-image-builder --agent opencode --inference vertexai myimage:latest
 ```
 
 ## Sandbox policy
@@ -124,7 +128,7 @@ Every image built by this tool includes `/etc/openshell/policy.yaml`. This file 
 The policy is built in three layers, merged in order:
 
 1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
-2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`.
+2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard).
 3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
 
 ## Dev Container Features
@@ -203,7 +207,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
 | `--config <CONFIG>`        | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`)        |
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
-| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`)           |
+| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
 
 ## Examples
@@ -230,7 +234,7 @@ $ openshell sandbox create \
   -- claude
 ```
 
-### Opencode agent + Anthropic models provider
+### OpenCode agent + Anthropic models provider
 
 ```
 $ openshell-image-builder \
@@ -283,7 +287,7 @@ $ openshell sandbox connect claude_vertexai_sandbox
 sandbox:~$ claude
 ```
 
-### Opencode agent + Vertex AI models provider
+### OpenCode agent + Vertex AI models provider
 
 ```
 $ openshell-image-builder \
