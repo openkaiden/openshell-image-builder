@@ -54,7 +54,41 @@ If no `config.toml` is found in the resolved directory, or the file is empty, bu
 
 If a directory is given explicitly (via `--config` or the environment variable) but it does not exist, the command fails immediately.
 
-### Schema
+### Base images
+
+**Ubuntu** (default)
+
+```toml
+[openshell_image_builder.base_image]
+image = "ubuntu"
+tag   = "24.04"
+```
+
+**Fedora**
+
+```toml
+[openshell_image_builder.base_image]
+image = "fedora"
+tag   = "latest"
+```
+
+**Red Hat UBI**
+
+```toml
+[openshell_image_builder.base_image]
+image = "ubi"
+tag   = "latest"
+```
+
+**Red Hat Hardened Images (Hummingbird)**
+
+```toml
+[openshell_image_builder.base_image]
+image = "hummingbird"
+tag   = "latest-builder"
+```
+
+### Full schema reference
 
 ```toml
 [openshell_image_builder]
@@ -62,14 +96,14 @@ version = 1
 
 [openshell_image_builder.base_image]
 image = "ubuntu"   # "ubuntu", "fedora", "ubi", or "hummingbird"
-tag   = "24.04"    # ubuntu: "24.04", "22.04", … — fedora: "latest", "43", "42", … — ubi: "10.2-1780377767", … — hummingbird: "latest-builder", …
+tag   = "24.04"
 ```
 
 | Field                                      | Default  | Description                  |
 | ------------------------------------------ | -------- | ---------------------------- |
 | `openshell_image_builder.version`          | `1`      | Configuration schema version |
 | `openshell_image_builder.base_image.image` | `ubuntu` | Base image name (`ubuntu`, `fedora`, `ubi`, or `hummingbird`) |
-| `openshell_image_builder.base_image.tag`   | `24.04`  | Base image tag — Ubuntu: `24.04`, `22.04`, …; Fedora: `latest`, `43`, `42`, …; UBI: `10.2-1780377767`, …; Hummingbird: `latest-builder`, … |
+| `openshell_image_builder.base_image.tag`   | `24.04`  | Base image tag — Ubuntu: `24.04`, `22.04`, …; Fedora: `latest`, `43`, `42`, …; UBI: `latest`, `10.2-1780377767`, …; Hummingbird: `latest-builder`, … |
 
 ### Loading from a specific config directory
 

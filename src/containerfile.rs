@@ -293,7 +293,7 @@ mod tests {
             version: 1,
             base_image: BaseImageConfig {
                 image: "ubi".to_string(),
-                tag: "10.2-1780377767".to_string(),
+                tag: "latest".to_string(),
             },
         }
     }
@@ -442,9 +442,7 @@ mod tests {
     #[test]
     fn ubi_containerfile_contains_tag() {
         let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
-        assert!(
-            content.contains("FROM registry.access.redhat.com/ubi10/ubi:10.2-1780377767 AS system")
-        );
+        assert!(content.contains("FROM registry.access.redhat.com/ubi10/ubi:latest AS system"));
     }
 
     #[test]

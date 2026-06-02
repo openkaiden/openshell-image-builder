@@ -35,7 +35,7 @@ fn ubi_config_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("config.toml"),
-        "[openshell_image_builder.base_image]\nimage = \"ubi\"\ntag = \"10.2-1780377767\"\n",
+        "[openshell_image_builder.base_image]\nimage = \"ubi\"\ntag = \"latest\"\n",
     )
     .unwrap();
     dir
