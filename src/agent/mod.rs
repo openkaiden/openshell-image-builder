@@ -19,8 +19,11 @@ mod opencode;
 
 #[cfg(test)]
 pub use claude::ClaudeAgent;
+#[cfg(test)]
+pub use opencode::OpencodeAgent;
 
 use clap::ValueEnum;
+use std::collections::HashMap;
 
 pub trait Agent {
     fn id(&self) -> &str;
@@ -28,6 +31,9 @@ pub trait Agent {
     fn binary_path(&self) -> &str;
     fn policy_yaml(&self) -> &str {
         ""
+    }
+    fn skip_onboarding(&self, files: HashMap<String, String>) -> HashMap<String, String> {
+        files
     }
 }
 
@@ -58,5 +64,14 @@ mod tests {
     fn from_kind_opencode_installs_opencode() {
         let agent = from_kind(AgentKind::Opencode);
         assert!(agent.install().contains("https://opencode.ai/install"));
+    }
+
+    #[test]
+    fn opencode_skip_onboarding_is_noop() {
+        let agent = from_kind(AgentKind::Opencode);
+        let mut files = HashMap::new();
+        files.insert("some.json".to_string(), "content".to_string());
+        let result = agent.skip_onboarding(files.clone());
+        assert_eq!(result, files);
     }
 }

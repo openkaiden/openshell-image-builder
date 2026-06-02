@@ -23,6 +23,7 @@ mod inference;
 mod policy;
 mod workspace;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const BASE_POLICY_YAML: &str = include_str!("../assets/policy.yaml");
@@ -89,20 +90,17 @@ fn main() {
         std::process::exit(1);
     });
     let has_agent_settings = agent.as_deref().is_some_and(|a| {
-        match config::agent_settings_dir(cli.config.as_deref(), a.id()) {
-            Ok(Some(dir)) => {
-                stage_agent_settings(&dir, context_dir.path()).unwrap_or_else(|e| {
-                    eprintln!("Error staging agent settings: {e}");
-                    std::process::exit(1);
-                });
-                true
-            }
-            Ok(None) => false,
+        let settings_dir = match config::agent_settings_dir(cli.config.as_deref(), a.id()) {
+            Ok(dir) => dir,
             Err(e) => {
                 eprintln!("Error finding agent settings directory: {e}");
                 std::process::exit(1);
             }
-        }
+        };
+        stage_agent_settings(a, settings_dir.as_deref(), context_dir.path()).unwrap_or_else(|e| {
+            eprintln!("Error staging agent settings: {e}");
+            std::process::exit(1);
+        })
     });
     let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref());
     std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml).unwrap_or_else(|e| {
@@ -142,14 +140,46 @@ fn copy_dir(src: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn read_flat_files(dir: &Path) -> Result<HashMap<String, String>, std::io::Error> {
+    let mut files = HashMap::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                files.insert(name, content);
+            }
+        }
+    }
+    Ok(files)
+}
+
 fn stage_agent_settings(
-    settings_dir: &Path,
+    agent: &dyn agent::Agent,
+    settings_dir: Option<&Path>,
     context_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let existing = match settings_dir {
+        Some(dir) => read_flat_files(dir)?,
+        None => HashMap::new(),
+    };
+
+    let onboarding = agent.skip_onboarding(existing);
+
+    if settings_dir.is_none() && onboarding.is_empty() {
+        return Ok(false);
+    }
+
     let dest = context_dir.join("agent-settings");
     std::fs::create_dir_all(&dest)?;
-    copy_dir(settings_dir, &dest)?;
-    Ok(())
+
+    if let Some(dir) = settings_dir {
+        copy_dir(dir, &dest)?;
+    }
+    for (name, content) in &onboarding {
+        std::fs::write(dest.join(name), content)?;
+    }
+    Ok(true)
 }
 
 fn build_policy(
@@ -309,7 +339,7 @@ mod tests {
     fn stage_agent_settings_creates_agent_settings_subdir() {
         let settings = tempfile::tempdir().unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(settings.path(), context.path()).unwrap();
+        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
         assert!(context.path().join("agent-settings").is_dir());
     }
 
@@ -318,7 +348,7 @@ mod tests {
         let settings = tempfile::tempdir().unwrap();
         std::fs::write(settings.path().join("myfile"), "data").unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(settings.path(), context.path()).unwrap();
+        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
         assert_eq!(
             std::fs::read_to_string(context.path().join("agent-settings").join("myfile")).unwrap(),
             "data"
@@ -332,7 +362,7 @@ mod tests {
         std::fs::create_dir(&subdir).unwrap();
         std::fs::write(subdir.join("settings.json"), "{}").unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(settings.path(), context.path()).unwrap();
+        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
         assert_eq!(
             std::fs::read_to_string(
                 context
@@ -344,5 +374,38 @@ mod tests {
             .unwrap(),
             "{}"
         );
+    }
+
+    #[test]
+    fn stage_agent_settings_returns_false_for_noop_agent_without_settings_dir() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(&agent::OpencodeAgent, None, context.path()).unwrap();
+        assert!(!staged);
+    }
+
+    #[test]
+    fn stage_agent_settings_creates_claude_json_for_claude_agent_without_settings_dir() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(&agent::ClaudeAgent, None, context.path()).unwrap();
+        assert!(staged);
+        assert!(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".claude.json")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn stage_agent_settings_claude_json_has_onboarding_flags() {
+        let context = tempfile::tempdir().unwrap();
+        stage_agent_settings(&agent::ClaudeAgent, None, context.path()).unwrap();
+        let content =
+            std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
+                .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["hasCompletedOnboarding"], true);
+        assert_eq!(json["projects"]["/sandbox"]["hasTrustDialogAccepted"], true);
     }
 }

@@ -15,6 +15,11 @@ Supported agents:
 - [Claude Code](https://claude.ai/code) (`--agent claude`)
 - [OpenCode](https://opencode.ai) (`--agent opencode`)
 
+Agent settings configuration includes:
+
+- Settings files embedded from a local directory into the sandbox home.
+- Automatic onboarding skip so the agent starts without interactive setup dialogs (Claude Code only, not necessary for OpenCode).
+
 Supported inference providers:
 
 - [Anthropic](https://www.anthropic.com) (`--inference anthropic`)
@@ -137,6 +142,15 @@ openshell-image-builder --agent opencode myimage:latest
 ```
 
 The file will be present at `/sandbox/.config/opencode/config.json` in the image.
+
+### Automatic configuration — Claude Code
+
+When `--agent claude` is used, the builder automatically creates or updates `/sandbox/.claude.json` with the following settings to skip the interactive onboarding dialogs that would otherwise appear on first launch:
+
+- `hasCompletedOnboarding: true` — marks the setup wizard as complete.
+- `projects["/sandbox"].hasTrustDialogAccepted: true` — pre-accepts the workspace trust prompt for the sandbox home directory.
+
+If you provide your own `.claude.json` in the agent settings directory, the builder merges these fields into it, preserving any other fields you have set.
 
 ## Configuring inference
 

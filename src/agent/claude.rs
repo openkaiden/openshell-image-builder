@@ -14,7 +14,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use super::Agent;
+
+const CLAUDE_CONFIG_FILE: &str = ".claude.json";
+const SANDBOX_HOME: &str = "/sandbox";
 
 pub struct ClaudeAgent;
 
@@ -30,6 +35,27 @@ impl Agent for ClaudeAgent {
 
     fn binary_path(&self) -> &str {
         "/sandbox/.local/bin/claude"
+    }
+
+    fn skip_onboarding(&self, mut files: HashMap<String, String>) -> HashMap<String, String> {
+        let content = files
+            .get(CLAUDE_CONFIG_FILE)
+            .cloned()
+            .unwrap_or_else(|| "{}".to_string());
+        let mut config: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+
+        config["hasCompletedOnboarding"] = serde_json::json!(true);
+        if !config["projects"].is_object() {
+            config["projects"] = serde_json::json!({});
+        }
+        config["projects"][SANDBOX_HOME]["hasTrustDialogAccepted"] = serde_json::json!(true);
+
+        files.insert(
+            CLAUDE_CONFIG_FILE.to_string(),
+            serde_json::to_string_pretty(&config).expect("valid json value"),
+        );
+        files
     }
 
     fn policy_yaml(&self) -> &str {
@@ -50,6 +76,7 @@ network_policies:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn agent_id_is_claude() {
@@ -92,5 +119,51 @@ mod tests {
     #[test]
     fn policy_yaml_has_platform_claude_endpoint() {
         assert!(ClaudeAgent.policy_yaml().contains("platform.claude.com"));
+    }
+
+    #[test]
+    fn skip_onboarding_creates_claude_json_when_absent() {
+        let result = ClaudeAgent.skip_onboarding(HashMap::new());
+        assert!(result.contains_key(CLAUDE_CONFIG_FILE));
+    }
+
+    #[test]
+    fn skip_onboarding_sets_completed_onboarding_flag() {
+        let result = ClaudeAgent.skip_onboarding(HashMap::new());
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["hasCompletedOnboarding"], true);
+    }
+
+    #[test]
+    fn skip_onboarding_sets_trust_dialog_accepted_for_sandbox_home() {
+        let result = ClaudeAgent.skip_onboarding(HashMap::new());
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(
+            json["projects"][SANDBOX_HOME]["hasTrustDialogAccepted"],
+            true
+        );
+    }
+
+    #[test]
+    fn skip_onboarding_preserves_existing_fields() {
+        let mut files = HashMap::new();
+        files.insert(
+            CLAUDE_CONFIG_FILE.to_string(),
+            r#"{"existingField": "value"}"#.to_string(),
+        );
+        let result = ClaudeAgent.skip_onboarding(files);
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["existingField"], "value");
+    }
+
+    #[test]
+    fn skip_onboarding_leaves_other_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("other.json".to_string(), "content".to_string());
+        let result = ClaudeAgent.skip_onboarding(files);
+        assert_eq!(result["other.json"], "content");
     }
 }

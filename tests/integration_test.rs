@@ -54,6 +54,7 @@ fn run_in_image(image: &str, cmd: &str) -> Output {
 // ---------------------------------------------------------------------------
 
 static UBUNTU_CLAUDE_SETTINGS_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_CLAUDE_WITH_CLAUDE_JSON_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_SETTINGS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
@@ -81,6 +82,24 @@ fn ubuntu_claude_settings_image() -> &'static str {
         let config = config_dir_with_agent_settings("claude", &[("my-claude-settings", "")]);
         build_image(
             "openshell-test-ubuntu-claude-settings:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+            ],
+        )
+    })
+}
+
+fn ubuntu_claude_with_claude_json_image() -> &'static str {
+    UBUNTU_CLAUDE_WITH_CLAUDE_JSON_IMAGE.get_or_init(|| {
+        let config = config_dir_with_agent_settings(
+            "claude",
+            &[(".claude.json", r#"{"existingField": "myvalue"}"#)],
+        );
+        build_image(
+            "openshell-test-ubuntu-claude-with-claude-json:integration",
             &[
                 "--config",
                 config.path().to_str().unwrap(),
@@ -891,6 +910,95 @@ mod agent_settings_opencode {
 }
 
 // ---------------------------------------------------------------------------
+// Claude onboarding-skip integration tests
+// ---------------------------------------------------------------------------
+
+mod claude_onboarding {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn claude_json_present_without_settings_dir() {
+        let out = run_in_image(ubuntu_claude_image(), "test -f /sandbox/.claude.json");
+        assert!(out.status.success(), ".claude.json not found in /sandbox");
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_json_has_completed_onboarding() {
+        let out = run_in_image(
+            ubuntu_claude_image(),
+            r#"grep -q '"hasCompletedOnboarding": true' /sandbox/.claude.json"#,
+        );
+        assert!(
+            out.status.success(),
+            "hasCompletedOnboarding is not true in .claude.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_json_has_trust_dialog_accepted() {
+        let out = run_in_image(
+            ubuntu_claude_image(),
+            r#"grep -q '"hasTrustDialogAccepted": true' /sandbox/.claude.json"#,
+        );
+        assert!(
+            out.status.success(),
+            "hasTrustDialogAccepted is not true in .claude.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_json_owned_by_sandbox() {
+        let out = run_in_image(ubuntu_claude_image(), "stat -c '%U' /sandbox/.claude.json");
+        assert!(out.status.success(), "failed to stat .claude.json");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            ".claude.json not owned by sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_json_merges_with_existing_content() {
+        let out = run_in_image(
+            ubuntu_claude_with_claude_json_image(),
+            r#"grep -q '"existingField": "myvalue"' /sandbox/.claude.json"#,
+        );
+        assert!(
+            out.status.success(),
+            "existing content not preserved in merged .claude.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_json_sets_flags_when_merging_with_existing_content() {
+        let out = run_in_image(
+            ubuntu_claude_with_claude_json_image(),
+            r#"grep -q '"hasCompletedOnboarding": true' /sandbox/.claude.json"#,
+        );
+        assert!(
+            out.status.success(),
+            "hasCompletedOnboarding not set after merging with existing .claude.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_has_no_claude_json() {
+        let out = run_in_image(ubuntu_opencode_image(), "test -f /sandbox/.claude.json");
+        assert!(
+            !out.status.success(),
+            ".claude.json should not be present in an opencode image"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -916,6 +1024,7 @@ fn cleanup_images() {
         "openshell-test-feature-local-ubuntu:integration",
         "openshell-test-feature-local-fedora:integration",
         "openshell-test-ubuntu-claude-settings:integration",
+        "openshell-test-ubuntu-claude-with-claude-json:integration",
         "openshell-test-ubuntu-opencode-settings:integration",
     ] {
         Command::new("podman")
