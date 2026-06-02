@@ -23,6 +23,7 @@ pub use claude::ClaudeAgent;
 use clap::ValueEnum;
 
 pub trait Agent {
+    fn id(&self) -> &str;
     fn install(&self) -> String;
     fn binary_path(&self) -> &str;
     fn policy_yaml(&self) -> &str {

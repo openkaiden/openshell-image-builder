@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::info;
 use serde::Deserialize;
@@ -70,7 +70,7 @@ impl Default for BaseImageConfig {
     }
 }
 
-fn find_config_file(explicit_dir: Option<PathBuf>) -> Result<Option<PathBuf>, std::io::Error> {
+fn find_settings_dir(explicit_dir: Option<&Path>) -> Result<Option<PathBuf>, std::io::Error> {
     if let Some(dir) = explicit_dir {
         if !dir.is_dir() {
             return Err(std::io::Error::new(
@@ -78,29 +78,38 @@ fn find_config_file(explicit_dir: Option<PathBuf>) -> Result<Option<PathBuf>, st
                 format!("Config directory not found: {}", dir.display()),
             ));
         }
-        let path = dir.join("config.toml");
-        if path.exists() {
-            info!("Config file found at {}", path.display());
-            return Ok(Some(path));
-        }
-        info!("No config.toml in {}", dir.display());
-        return Ok(None);
+        return Ok(Some(dir.to_path_buf()));
     }
-    let xdg_path =
-        dirs::config_dir().map(|d| d.join("openshell-image-builder").join("config.toml"));
-    match xdg_path {
-        Some(ref path) if path.exists() => {
-            info!("Config file found at XDG path {}", path.display());
-            Ok(xdg_path)
-        }
-        Some(ref path) => {
-            info!("No config file at XDG path {}", path.display());
-            Ok(None)
-        }
-        None => {
-            info!("XDG config directory not available");
-            Ok(None)
-        }
+    Ok(dirs::config_dir().map(|d| d.join("openshell-image-builder")))
+}
+
+fn find_config_file(explicit_dir: Option<PathBuf>) -> Result<Option<PathBuf>, std::io::Error> {
+    let Some(dir) = find_settings_dir(explicit_dir.as_deref())? else {
+        info!("XDG config directory not available");
+        return Ok(None);
+    };
+    let path = dir.join("config.toml");
+    if path.exists() {
+        info!("Config file found at {}", path.display());
+        Ok(Some(path))
+    } else {
+        info!("No config file at {}", path.display());
+        Ok(None)
+    }
+}
+
+pub fn agent_settings_dir(
+    explicit_dir: Option<&Path>,
+    agent_name: &str,
+) -> Result<Option<PathBuf>, std::io::Error> {
+    let Some(settings_dir) = find_settings_dir(explicit_dir)? else {
+        return Ok(None);
+    };
+    let dir = settings_dir.join("agents").join(agent_name);
+    if dir.is_dir() {
+        Ok(Some(dir))
+    } else {
+        Ok(None)
     }
 }
 
@@ -237,5 +246,34 @@ tag = "24.04"
         // Exercises the XDG config-directory lookup; result is environment-dependent
         // but must always be Ok (either defaults or a valid XDG config).
         assert!(load(None).is_ok());
+    }
+
+    #[test]
+    fn agent_settings_dir_returns_none_when_subdir_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = agent_settings_dir(Some(dir.path()), "claude").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn agent_settings_dir_returns_path_when_subdir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_dir = dir.path().join("agents").join("claude");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let result = agent_settings_dir(Some(dir.path()), "claude").unwrap();
+        assert_eq!(result, Some(agent_dir));
+    }
+
+    #[test]
+    fn agent_settings_dir_fails_when_explicit_dir_not_found() {
+        let path = std::env::temp_dir().join("openshell-image-builder-nonexistent-dir");
+        assert!(!path.exists());
+        assert!(agent_settings_dir(Some(&path), "claude").is_err());
+    }
+
+    #[test]
+    fn agent_settings_dir_with_no_explicit_path_returns_ok() {
+        // XDG lookup — result is environment-dependent but must always be Ok.
+        assert!(agent_settings_dir(None, "claude").is_ok());
     }
 }

@@ -19,6 +19,10 @@ use super::Agent;
 pub struct OpencodeAgent;
 
 impl Agent for OpencodeAgent {
+    fn id(&self) -> &str {
+        "opencode"
+    }
+
     fn install(&self) -> String {
         // The installer places the binary in ~/.opencode/bin/ which is not in PATH,
         // so we symlink it into ~/.local/bin/.
@@ -53,6 +57,11 @@ network_policies:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_id_is_opencode() {
+        assert_eq!(OpencodeAgent.id(), "opencode");
+    }
 
     #[test]
     fn install_is_nonempty() {

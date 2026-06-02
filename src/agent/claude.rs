@@ -19,6 +19,10 @@ use super::Agent;
 pub struct ClaudeAgent;
 
 impl Agent for ClaudeAgent {
+    fn id(&self) -> &str {
+        "claude"
+    }
+
     fn install(&self) -> String {
         "RUN curl -fsSL https://claude.ai/install.sh | bash\nENV PATH=/sandbox/.local/bin:$PATH"
             .to_string()
@@ -46,6 +50,11 @@ network_policies:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_id_is_claude() {
+        assert_eq!(ClaudeAgent.id(), "claude");
+    }
 
     #[test]
     fn install_is_nonempty() {

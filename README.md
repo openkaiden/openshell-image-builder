@@ -5,7 +5,7 @@
 OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/OpenShell-Community), but they are general-purpose. `openshell-image-builder` lets you build your own: lightweight, workspace-specific images that contain only what you need — without writing a Containerfile by hand.
 
 - **Base image selection** — Ubuntu or Fedora, any tag.
-- **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints.
+- **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints. Settings files can be embedded into the image from a local directory.
 - **Inference configuration** — scoped network access to LLM backends.
 - **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
 - **Sandbox policy** — every image ships `/etc/openshell/policy.yaml`, built from a base policy merged with inference and agent rules.
@@ -101,6 +101,42 @@ Pass `--agent` to install an agent into the image.
 openshell-image-builder --agent claude myimage:latest
 openshell-image-builder --agent opencode myimage:latest
 ```
+
+## Agent settings
+
+You can pre-populate the sandbox home directory with settings files specific to an agent. Place the files under:
+
+```
+<settings dir>/agents/<agent>/
+```
+
+where `<settings dir>` is the directory described in [Configuring the base image](#configuring-the-base-image), and `<agent>` matches the value passed to `--agent` (`claude` or `opencode`).
+
+All files and subdirectories are copied into `/sandbox/` (the sandbox user's home directory), owned by the `sandbox` user. The copy happens before the agent is installed, so the agent installer can create additional files on top without overwriting your settings.
+
+### Example — Claude Code settings file
+
+```sh
+mkdir -p ~/.config/openshell-image-builder/agents/claude/.claude
+cp ~/.claude/settings.json \
+   ~/.config/openshell-image-builder/agents/claude/.claude/settings.json
+
+openshell-image-builder --agent claude myimage:latest
+```
+
+The file will be present at `/sandbox/.claude/settings.json` in the image.
+
+### Example — OpenCode settings file
+
+```sh
+mkdir -p ~/.config/openshell-image-builder/agents/opencode/.config/opencode
+cp ~/.config/opencode/config.json \
+   ~/.config/openshell-image-builder/agents/opencode/.config/opencode/config.json
+
+openshell-image-builder --agent opencode myimage:latest
+```
+
+The file will be present at `/sandbox/.config/opencode/config.json` in the image.
 
 ## Configuring inference
 

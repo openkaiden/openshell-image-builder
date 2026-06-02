@@ -53,6 +53,8 @@ fn run_in_image(image: &str, cmd: &str) -> Output {
 // One OnceLock per image variant — each image is built at most once
 // ---------------------------------------------------------------------------
 
+static UBUNTU_CLAUDE_SETTINGS_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_SETTINGS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
@@ -63,6 +65,46 @@ static FEDORA_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+
+fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let agent_dir = dir.path().join("agents").join(agent);
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    for (name, content) in files {
+        std::fs::write(agent_dir.join(name), content).unwrap();
+    }
+    dir
+}
+
+fn ubuntu_claude_settings_image() -> &'static str {
+    UBUNTU_CLAUDE_SETTINGS_IMAGE.get_or_init(|| {
+        let config = config_dir_with_agent_settings("claude", &[("my-claude-settings", "")]);
+        build_image(
+            "openshell-test-ubuntu-claude-settings:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_settings_image() -> &'static str {
+    UBUNTU_OPENCODE_SETTINGS_IMAGE.get_or_init(|| {
+        let config = config_dir_with_agent_settings("opencode", &[("my-opencode-settings", "")]);
+        build_image(
+            "openshell-test-ubuntu-opencode-settings:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+            ],
+        )
+    })
+}
 
 fn ubuntu_image() -> &'static str {
     UBUNTU_IMAGE.get_or_init(|| build_image("openshell-test-ubuntu:integration", &[]))
@@ -755,6 +797,100 @@ feature_python_tests!(
 );
 
 // ---------------------------------------------------------------------------
+// Agent settings integration tests
+// ---------------------------------------------------------------------------
+
+mod agent_settings_claude {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn settings_file_present_in_sandbox() {
+        let out = run_in_image(
+            ubuntu_claude_settings_image(),
+            "test -f /sandbox/my-claude-settings",
+        );
+        assert!(
+            out.status.success(),
+            "claude settings file not found in /sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn settings_file_not_in_image_without_settings() {
+        let out = run_in_image(ubuntu_claude_image(), "test -f /sandbox/my-claude-settings");
+        assert!(
+            !out.status.success(),
+            "claude settings file should not be present in image built without agent settings"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn settings_file_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_claude_settings_image(),
+            "stat -c '%U' /sandbox/my-claude-settings",
+        );
+        assert!(out.status.success(), "failed to stat claude settings file");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "claude settings file not owned by sandbox"
+        );
+    }
+}
+
+mod agent_settings_opencode {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn settings_file_present_in_sandbox() {
+        let out = run_in_image(
+            ubuntu_opencode_settings_image(),
+            "test -f /sandbox/my-opencode-settings",
+        );
+        assert!(
+            out.status.success(),
+            "opencode settings file not found in /sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn settings_file_not_in_image_without_settings() {
+        let out = run_in_image(
+            ubuntu_opencode_image(),
+            "test -f /sandbox/my-opencode-settings",
+        );
+        assert!(
+            !out.status.success(),
+            "opencode settings file should not be present in image built without agent settings"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn settings_file_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_opencode_settings_image(),
+            "stat -c '%U' /sandbox/my-opencode-settings",
+        );
+        assert!(
+            out.status.success(),
+            "failed to stat opencode settings file"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "opencode settings file not owned by sandbox"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -779,6 +915,8 @@ fn cleanup_images() {
         "openshell-test-feature-python-fedora:integration",
         "openshell-test-feature-local-ubuntu:integration",
         "openshell-test-feature-local-fedora:integration",
+        "openshell-test-ubuntu-claude-settings:integration",
+        "openshell-test-ubuntu-opencode-settings:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
