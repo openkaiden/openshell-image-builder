@@ -81,7 +81,7 @@ pub fn generate(
         "hummingbird" => dnf_system_stage(
             "registry.access.redhat.com/hi/core-runtime",
             tag,
-            &["bind-utils", "openssh-server", "procps-ng", "which"],
+            &["bind-utils", "openssh-server", "procps-ng", "which", "tar"],
         ),
         "ubuntu" => ubuntu_system_stage(tag),
         image => {

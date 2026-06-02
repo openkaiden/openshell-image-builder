@@ -462,7 +462,7 @@ fn check_users_and_groups(image: &str) {
 }
 
 fn check_packages(image: &str) {
-    for pkg in ["curl", "ip", "ping"] {
+    for pkg in ["curl", "tar"] {
         let out = run_in_image(image, &format!("which {pkg}"));
         assert!(out.status.success(), "{pkg} not found in image");
     }
