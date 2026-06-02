@@ -35,6 +35,9 @@ pub trait Agent {
     fn skip_onboarding(&self, files: HashMap<String, String>) -> HashMap<String, String> {
         files
     }
+    fn skills_dir(&self) -> &str {
+        ""
+    }
 }
 
 #[derive(Clone, ValueEnum)]

@@ -230,6 +230,32 @@ With the above, `./my-feature` refers to a local feature at `.kaiden/my-feature/
 
 Features are installed in the order defined by each feature's `installsAfter` field in its `devcontainer-feature.json`. Within the same dependency level, features are processed in alphabetical order by reference.
 
+## Skills
+
+Agents can be extended with *skills* — named toolkits that an agent discovers at startup. Declare skill directories in `.kaiden/workspace.json`:
+
+```json
+{
+  "skills": [
+    "./my-skill",
+    "./.kaiden/skills/another-skill"
+  ]
+}
+```
+
+Each entry is a path to a directory (relative to the workspace root). The directory name becomes the skill name in the image.
+
+During the build, each skill directory is copied into the agent's skills directory:
+
+| Agent      | Skills directory               |
+| ---------- | ------------------------------ |
+| `claude`   | `/sandbox/.claude/skills/`     |
+| `opencode` | `/sandbox/.opencode/skills/`   |
+
+With `--agent claude` and `"skills": ["./my-skill"]`, the skill lands at `/sandbox/.claude/skills/my-skill/` in the image, owned by the `sandbox` user.
+
+Skills without a corresponding `--agent` flag are silently ignored — the agent determines where skills go, so a build without an agent produces no skill COPY instructions.
+
 ### How it works
 
 When `.kaiden/workspace.json` is present, the tool:

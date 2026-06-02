@@ -58,6 +58,10 @@ impl Agent for ClaudeAgent {
         files
     }
 
+    fn skills_dir(&self) -> &str {
+        "/sandbox/.claude/skills"
+    }
+
     fn policy_yaml(&self) -> &str {
         r#"version: 1
 network_policies:
@@ -157,6 +161,11 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
         assert_eq!(json["existingField"], "value");
+    }
+
+    #[test]
+    fn skills_dir_is_claude_skills() {
+        assert_eq!(ClaudeAgent.skills_dir(), "/sandbox/.claude/skills");
     }
 
     #[test]

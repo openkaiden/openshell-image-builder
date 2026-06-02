@@ -38,6 +38,10 @@ impl Agent for OpencodeAgent {
         "/sandbox/.local/bin/opencode"
     }
 
+    fn skills_dir(&self) -> &str {
+        "/sandbox/.opencode/skills"
+    }
+
     fn policy_yaml(&self) -> &str {
         r#"version: 1
 network_policies:
@@ -98,6 +102,11 @@ mod tests {
     #[test]
     fn binary_path_is_local_bin_opencode() {
         assert_eq!(OpencodeAgent.binary_path(), "/sandbox/.local/bin/opencode");
+    }
+
+    #[test]
+    fn skills_dir_is_opencode_skills() {
+        assert_eq!(OpencodeAgent.skills_dir(), "/sandbox/.opencode/skills");
     }
 
     #[test]
