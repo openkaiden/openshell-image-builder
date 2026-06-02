@@ -70,16 +70,21 @@ impl Default for BaseImageConfig {
     }
 }
 
-fn find_config_file(explicit_path: Option<PathBuf>) -> Result<Option<PathBuf>, std::io::Error> {
-    if let Some(path) = explicit_path {
+fn find_config_file(explicit_dir: Option<PathBuf>) -> Result<Option<PathBuf>, std::io::Error> {
+    if let Some(dir) = explicit_dir {
+        if !dir.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Config directory not found: {}", dir.display()),
+            ));
+        }
+        let path = dir.join("config.toml");
         if path.exists() {
             info!("Config file found at {}", path.display());
             return Ok(Some(path));
         }
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Config file not found: {}", path.display()),
-        ));
+        info!("No config.toml in {}", dir.display());
+        return Ok(None);
     }
     let xdg_path =
         dirs::config_dir().map(|d| d.join("openshell-image-builder").join("config.toml"));
@@ -124,6 +129,13 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn write_config_dir(content: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join("config.toml")).unwrap();
+        write!(f, "{content}").unwrap();
+        dir
+    }
+
     #[test]
     fn default_config() {
         let config = Config::default();
@@ -133,25 +145,29 @@ mod tests {
     }
 
     #[test]
-    fn load_fails_when_explicit_path_not_found() {
-        let path = std::env::temp_dir().join("openshell-image-builder-nonexistent.toml");
+    fn load_fails_when_explicit_dir_not_found() {
+        let path = std::env::temp_dir().join("openshell-image-builder-nonexistent-dir");
         assert!(!path.exists());
         assert!(load(Some(path)).is_err());
     }
 
     #[test]
+    fn load_returns_defaults_when_no_config_toml_in_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
     fn load_returns_defaults_for_empty_file() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(f, "   ").unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+        let dir = write_config_dir("   ");
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config, Config::default());
     }
 
     #[test]
     fn load_parses_valid_toml() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            f,
+        let dir = write_config_dir(
             r#"
 [openshell_image_builder]
 version = 2
@@ -159,10 +175,9 @@ version = 2
 [openshell_image_builder.base_image]
 image = "ubuntu"
 tag = "24.04"
-"#
-        )
-        .unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+"#,
+        );
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 2);
         assert_eq!(config.base_image.image, "ubuntu");
         assert_eq!(config.base_image.tag, "24.04");
@@ -170,36 +185,30 @@ tag = "24.04"
 
     #[test]
     fn load_returns_error_for_invalid_toml() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(f, "not valid toml [[[").unwrap();
-        assert!(load(Some(f.path().to_path_buf())).is_err());
+        let dir = write_config_dir("not valid toml [[[");
+        assert!(load(Some(dir.path().to_path_buf())).is_err());
     }
 
     #[test]
     fn load_returns_error_when_required_section_missing() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(f, "[some_other_section]\nkey = \"value\"").unwrap();
-        assert!(load(Some(f.path().to_path_buf())).is_err());
+        let dir = write_config_dir("[some_other_section]\nkey = \"value\"");
+        assert!(load(Some(dir.path().to_path_buf())).is_err());
     }
 
     #[test]
     fn load_parses_toml_with_only_version() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(f, "[openshell_image_builder]\nversion = 2").unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+        let dir = write_config_dir("[openshell_image_builder]\nversion = 2");
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 2);
         assert_eq!(config.base_image, BaseImageConfig::default());
     }
 
     #[test]
     fn load_parses_toml_with_only_base_image() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            f,
-            "[openshell_image_builder.base_image]\nimage = \"ubuntu\"\ntag = \"24.04\""
-        )
-        .unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+        let dir = write_config_dir(
+            "[openshell_image_builder.base_image]\nimage = \"ubuntu\"\ntag = \"24.04\"",
+        );
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.base_image.image, "ubuntu");
         assert_eq!(config.base_image.tag, "24.04");
@@ -207,13 +216,8 @@ tag = "24.04"
 
     #[test]
     fn load_parses_toml_with_only_image_in_base_image() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            f,
-            "[openshell_image_builder.base_image]\nimage = \"centos\""
-        )
-        .unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+        let dir = write_config_dir("[openshell_image_builder.base_image]\nimage = \"centos\"");
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.base_image.image, "centos");
         assert_eq!(config.base_image.tag, "24.04");
@@ -221,9 +225,8 @@ tag = "24.04"
 
     #[test]
     fn load_parses_toml_with_only_tag_in_base_image() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
-        writeln!(f, "[openshell_image_builder.base_image]\ntag = \"40\"").unwrap();
-        let config = load(Some(f.path().to_path_buf())).unwrap();
+        let dir = write_config_dir("[openshell_image_builder.base_image]\ntag = \"40\"");
+        let config = load(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.base_image.image, "ubuntu");
         assert_eq!(config.base_image.tag, "40");

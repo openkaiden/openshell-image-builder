@@ -42,7 +42,7 @@ struct Cli {
     #[arg(
         long,
         env = "OPENSHELL_IMAGE_BUILDER_CONFIG",
-        help = "Path to config file"
+        help = "Path to config directory (must contain config.toml)"
     )]
     config: Option<PathBuf>,
     #[arg(

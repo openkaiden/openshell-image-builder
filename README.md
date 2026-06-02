@@ -36,18 +36,18 @@ To use a different base image or tag, create a configuration file.
 
 ### File location
 
-The tool looks for a configuration file in this order, using the first one found:
+The tool looks for a `config.toml` file in this order, using the first directory found:
 
-1. Path given by the `--config` flag
-2. Path set in the `OPENSHELL_IMAGE_BUILDER_CONFIG` environment variable
+1. Directory given by the `--config` flag
+2. Directory set in the `OPENSHELL_IMAGE_BUILDER_CONFIG` environment variable
 3. The platform config directory:
-   - Linux: `$XDG_CONFIG_HOME/openshell-image-builder/config.toml` (defaults to `~/.config/openshell-image-builder/config.toml`)
-   - macOS: `~/Library/Application Support/openshell-image-builder/config.toml`
-   - Windows: `%APPDATA%\openshell-image-builder\config.toml`
+   - Linux: `$XDG_CONFIG_HOME/openshell-image-builder/` (defaults to `~/.config/openshell-image-builder/`)
+   - macOS: `~/Library/Application Support/openshell-image-builder/`
+   - Windows: `%APPDATA%\openshell-image-builder\`
 
-If no file is found, or the file is empty, built-in defaults are used.
+If no `config.toml` is found in the resolved directory, or the file is empty, built-in defaults are used.
 
-If a path is given explicitly (via `--config` or the environment variable) but the file does not exist, the command fails immediately.
+If a directory is given explicitly (via `--config` or the environment variable) but it does not exist, the command fails immediately.
 
 ### Schema
 
@@ -66,18 +66,18 @@ tag   = "24.04"    # ubuntu: "24.04", "22.04", … — fedora: "latest", "43", "
 | `openshell_image_builder.base_image.image` | `ubuntu` | Base image name (`ubuntu` or `fedora`) |
 | `openshell_image_builder.base_image.tag`   | `24.04`  | Base image tag — Ubuntu: `24.04`, `22.04`, …; Fedora: `latest`, `43`, `42`, … |
 
-### Loading a specific config file
+### Loading from a specific config directory
 
-Pass `--config` to point to a file explicitly:
+Pass `--config` to point to a directory explicitly (the tool reads `config.toml` inside it):
 
 ```sh
-openshell-image-builder --config /path/to/config.toml myimage:latest
+openshell-image-builder --config /path/to/config/dir myimage:latest
 ```
 
 Or set the environment variable instead:
 
 ```sh
-OPENSHELL_IMAGE_BUILDER_CONFIG=/path/to/config.toml openshell-image-builder myimage:latest
+OPENSHELL_IMAGE_BUILDER_CONFIG=/path/to/config/dir openshell-image-builder myimage:latest
 ```
 
 ## Logging
@@ -205,7 +205,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | Argument / Option          | Description                                                        |
 | -------------------------- | ------------------------------------------------------------------ |
 | `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
-| `--config <CONFIG>`        | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`)        |
+| `--config <CONFIG>`        | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
 | `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |

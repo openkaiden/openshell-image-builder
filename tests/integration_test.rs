@@ -14,7 +14,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::Write;
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
@@ -22,14 +21,14 @@ use std::sync::OnceLock;
 // Image build helpers
 // ---------------------------------------------------------------------------
 
-fn fedora_config_file() -> tempfile::NamedTempFile {
-    let mut f = tempfile::NamedTempFile::new().unwrap();
-    writeln!(
-        f,
-        "[openshell_image_builder.base_image]\nimage = \"fedora\"\ntag = \"latest\""
+fn fedora_config_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[openshell_image_builder.base_image]\nimage = \"fedora\"\ntag = \"latest\"\n",
     )
     .unwrap();
-    f
+    dir
 }
 
 fn build_image(tag: &str, extra_args: &[&str]) -> String {
@@ -80,7 +79,7 @@ fn ubuntu_claude_image() -> &'static str {
 
 fn fedora_image() -> &'static str {
     FEDORA_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora:integration",
             &["--config", config.path().to_str().unwrap()],
@@ -90,7 +89,7 @@ fn fedora_image() -> &'static str {
 
 fn fedora_claude_image() -> &'static str {
     FEDORA_CLAUDE_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora-claude:integration",
             &[
@@ -116,7 +115,7 @@ fn ubuntu_opencode_image() -> &'static str {
 
 fn fedora_opencode_image() -> &'static str {
     FEDORA_OPENCODE_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora-opencode:integration",
             &[
@@ -151,7 +150,7 @@ fn ubuntu_opencode_vertexai_image() -> &'static str {
 
 fn fedora_claude_vertexai_image() -> &'static str {
     FEDORA_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora-claude-vertexai:integration",
             &[
@@ -168,7 +167,7 @@ fn fedora_claude_vertexai_image() -> &'static str {
 
 fn fedora_opencode_vertexai_image() -> &'static str {
     FEDORA_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora-opencode-vertexai:integration",
             &[
@@ -506,7 +505,7 @@ fn feature_python_ubuntu_image() -> &'static str {
 
 fn feature_common_utils_fedora_image() -> &'static str {
     FEATURE_COMMON_UTILS_FEDORA_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image_with_workspace(
             "openshell-test-feature-common-utils-fedora:integration",
             COMMON_UTILS_WORKSPACE,
@@ -517,7 +516,7 @@ fn feature_common_utils_fedora_image() -> &'static str {
 
 fn feature_node_fedora_image() -> &'static str {
     FEATURE_NODE_FEDORA_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image_with_workspace(
             "openshell-test-feature-node-fedora:integration",
             NODE_WORKSPACE,
@@ -528,7 +527,7 @@ fn feature_node_fedora_image() -> &'static str {
 
 fn feature_python_fedora_image() -> &'static str {
     FEATURE_PYTHON_FEDORA_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image_with_workspace(
             "openshell-test-feature-python-fedora:integration",
             PYTHON_WORKSPACE,
@@ -586,7 +585,7 @@ fn feature_local_ubuntu_image() -> &'static str {
 
 fn feature_local_fedora_image() -> &'static str {
     FEATURE_LOCAL_FEDORA_IMAGE.get_or_init(|| {
-        let config = fedora_config_file();
+        let config = fedora_config_dir();
         build_image_with_local_feature(
             "openshell-test-feature-local-fedora:integration",
             &["--config", config.path().to_str().unwrap()],
