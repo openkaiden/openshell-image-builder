@@ -255,6 +255,7 @@ RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
     chown -R sandbox:sandbox /sandbox
 
+ENV HOME=/sandbox
 USER sandbox
 
 {agent_settings_section}{skills_section}{agent_section}ENTRYPOINT ["/bin/bash"]
@@ -528,6 +529,18 @@ mod tests {
     fn hummingbird_copies_policy_yaml() {
         let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
+    }
+
+    #[test]
+    fn home_env_set_to_sandbox() {
+        for content in [
+            generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap(),
+            generate(&fedora_config(), None, &[], false, &[]).unwrap(),
+            generate(&ubi_config(), None, &[], false, &[]).unwrap(),
+            generate(&hummingbird_config(), None, &[], false, &[]).unwrap(),
+        ] {
+            assert!(content.contains("ENV HOME=/sandbox"));
+        }
     }
 
     #[test]
