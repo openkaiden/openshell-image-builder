@@ -102,16 +102,27 @@ fn main() {
             std::process::exit(1);
         })
     });
+    let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())
+        .unwrap_or_else(|e| {
+            eprintln!("Error staging skills: {e}");
+            std::process::exit(1);
+        });
     let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref());
     std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml).unwrap_or_else(|e| {
         eprintln!("Error writing policy.yaml to build context: {e}");
         std::process::exit(1);
     });
-    let output = containerfile::generate(&config, agent.as_deref(), &features, has_agent_settings)
-        .unwrap_or_else(|e| {
-            eprintln!("Error generating Containerfile: {e}");
-            std::process::exit(1);
-        });
+    let output = containerfile::generate(
+        &config,
+        agent.as_deref(),
+        &features,
+        has_agent_settings,
+        &skill_names,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Error generating Containerfile: {e}");
+        std::process::exit(1);
+    });
     build::build(&output, &cli.tag, &build::PodmanRunner, context_dir.path()).unwrap_or_else(|e| {
         eprintln!("Error building image: {e}");
         std::process::exit(1);
@@ -152,6 +163,37 @@ fn read_flat_files(dir: &Path) -> Result<HashMap<String, String>, std::io::Error
         }
     }
     Ok(files)
+}
+
+fn stage_skills(
+    workspace: Option<&workspace::WorkspaceConfiguration>,
+    agent: Option<&dyn agent::Agent>,
+    context_dir: &Path,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let has_skills_dir = agent.map(|a| !a.skills_dir().is_empty()).unwrap_or(false);
+    if !has_skills_dir {
+        return Ok(vec![]);
+    }
+    let skills = match workspace {
+        Some(ws) if !ws.skills.is_empty() => ws.skills.as_slice(),
+        _ => return Ok(vec![]),
+    };
+    let dest = context_dir.join("skills");
+    std::fs::create_dir_all(&dest)?;
+    let mut staged = vec![];
+    for skill_path in skills {
+        let src = Path::new(skill_path);
+        let skill_name = src
+            .file_name()
+            .ok_or_else(|| format!("invalid skill path: {skill_path}"))?
+            .to_string_lossy()
+            .into_owned();
+        let dest_skill = dest.join(&skill_name);
+        std::fs::create_dir_all(&dest_skill)?;
+        copy_dir(src, &dest_skill)?;
+        staged.push(skill_name);
+    }
+    Ok(staged)
 }
 
 fn stage_agent_settings(
@@ -407,5 +449,108 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["hasCompletedOnboarding"], true);
         assert_eq!(json["projects"]["/sandbox"]["hasTrustDialogAccepted"], true);
+    }
+
+    // stage_skills
+
+    struct NoSkillsAgent;
+
+    impl agent::Agent for NoSkillsAgent {
+        fn id(&self) -> &str {
+            "no-skills"
+        }
+        fn install(&self) -> String {
+            String::new()
+        }
+        fn binary_path(&self) -> &str {
+            "/no-skills"
+        }
+    }
+
+    fn make_skill_dir(base: &Path, name: &str) -> PathBuf {
+        let skill = base.join(name);
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), format!("# {name}")).unwrap();
+        skill
+    }
+
+    fn make_workspace_with_skills(skills: &[&str]) -> workspace::WorkspaceConfiguration {
+        let mut ws = workspace::WorkspaceConfiguration::default();
+        ws.skills = skills.iter().map(|s| s.to_string()).collect();
+        ws
+    }
+
+    #[test]
+    fn stage_skills_returns_empty_when_no_agent() {
+        let context = tempfile::tempdir().unwrap();
+        let ws = make_workspace_with_skills(&[]);
+        let names = stage_skills(Some(&ws), None, context.path()).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn stage_skills_returns_empty_when_agent_has_no_skills_dir() {
+        let context = tempfile::tempdir().unwrap();
+        let ws = make_workspace_with_skills(&["some-skill"]);
+        let names = stage_skills(Some(&ws), Some(&NoSkillsAgent), context.path()).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn stage_skills_returns_empty_when_workspace_has_no_skills() {
+        let context = tempfile::tempdir().unwrap();
+        let ws = make_workspace_with_skills(&[]);
+        let names = stage_skills(Some(&ws), Some(&agent::ClaudeAgent), context.path()).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn stage_skills_returns_empty_when_no_workspace() {
+        let context = tempfile::tempdir().unwrap();
+        let names = stage_skills(None, Some(&agent::ClaudeAgent), context.path()).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn stage_skills_copies_skill_dir_to_context() {
+        let src = tempfile::tempdir().unwrap();
+        make_skill_dir(src.path(), "my-skill");
+        let context = tempfile::tempdir().unwrap();
+        let skill_path = src.path().join("my-skill").to_string_lossy().into_owned();
+        let ws = make_workspace_with_skills(&[&skill_path]);
+        let names = stage_skills(Some(&ws), Some(&agent::ClaudeAgent), context.path()).unwrap();
+        assert_eq!(names, vec!["my-skill"]);
+        assert!(context.path().join("skills").join("my-skill").is_dir());
+    }
+
+    #[test]
+    fn stage_skills_copies_skill_contents() {
+        let src = tempfile::tempdir().unwrap();
+        make_skill_dir(src.path(), "my-skill");
+        let context = tempfile::tempdir().unwrap();
+        let skill_path = src.path().join("my-skill").to_string_lossy().into_owned();
+        let ws = make_workspace_with_skills(&[&skill_path]);
+        stage_skills(Some(&ws), Some(&agent::ClaudeAgent), context.path()).unwrap();
+        let skill_md = context
+            .path()
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        assert!(skill_md.exists());
+        assert_eq!(std::fs::read_to_string(skill_md).unwrap(), "# my-skill");
+    }
+
+    #[test]
+    fn stage_skills_returns_all_skill_names() {
+        let src = tempfile::tempdir().unwrap();
+        make_skill_dir(src.path(), "skill-a");
+        make_skill_dir(src.path(), "skill-b");
+        let context = tempfile::tempdir().unwrap();
+        let path_a = src.path().join("skill-a").to_string_lossy().into_owned();
+        let path_b = src.path().join("skill-b").to_string_lossy().into_owned();
+        let ws = make_workspace_with_skills(&[&path_a, &path_b]);
+        let mut names = stage_skills(Some(&ws), Some(&agent::ClaudeAgent), context.path()).unwrap();
+        names.sort();
+        assert_eq!(names, vec!["skill-a", "skill-b"]);
     }
 }

@@ -66,6 +66,8 @@ static FEDORA_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_CLAUDE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -655,6 +657,56 @@ fn feature_local_fedora_image() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Skills image helpers
+// ---------------------------------------------------------------------------
+
+fn skills_workspace_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let kaiden = dir.path().join(".kaiden");
+    std::fs::create_dir_all(&kaiden).unwrap();
+    let skill_dir = dir.path().join("my-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# my-skill\n").unwrap();
+    std::fs::write(
+        kaiden.join("workspace.json"),
+        r#"{"skills": ["./my-skill"]}"#,
+    )
+    .unwrap();
+    dir
+}
+
+fn build_image_with_skills(tag: &str, extra_args: &[&str]) -> String {
+    let dir = skills_workspace_dir();
+    let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+    let status = Command::new(binary)
+        .current_dir(dir.path())
+        .args(extra_args)
+        .arg(tag)
+        .status()
+        .expect("binary should run");
+    assert!(status.success(), "image build failed for tag {tag}");
+    tag.to_string()
+}
+
+fn ubuntu_claude_skills_image() -> &'static str {
+    UBUNTU_CLAUDE_SKILLS_IMAGE.get_or_init(|| {
+        build_image_with_skills(
+            "openshell-test-ubuntu-claude-skills:integration",
+            &["--agent", "claude"],
+        )
+    })
+}
+
+fn ubuntu_opencode_skills_image() -> &'static str {
+    UBUNTU_OPENCODE_SKILLS_IMAGE.get_or_init(|| {
+        build_image_with_skills(
+            "openshell-test-ubuntu-opencode-skills:integration",
+            &["--agent", "opencode"],
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Feature integration tests — one macro per feature, instantiated per base image
 // ---------------------------------------------------------------------------
 
@@ -999,6 +1051,126 @@ mod claude_onboarding {
 }
 
 // ---------------------------------------------------------------------------
+// Skills integration tests
+// ---------------------------------------------------------------------------
+
+mod skills_claude {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn skill_dir_present_in_claude_skills_path() {
+        let out = run_in_image(
+            ubuntu_claude_skills_image(),
+            "test -d /sandbox/.claude/skills/my-skill",
+        );
+        assert!(
+            out.status.success(),
+            "skill directory not found in /sandbox/.claude/skills/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_file_present_in_skill_dir() {
+        let out = run_in_image(
+            ubuntu_claude_skills_image(),
+            "test -f /sandbox/.claude/skills/my-skill/SKILL.md",
+        );
+        assert!(
+            out.status.success(),
+            "SKILL.md not found in /sandbox/.claude/skills/my-skill/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_dir_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_claude_skills_image(),
+            "stat -c '%U' /sandbox/.claude/skills/my-skill",
+        );
+        assert!(out.status.success(), "failed to stat skill directory");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "skill directory not owned by sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_not_present_in_image_without_skills() {
+        let out = run_in_image(
+            ubuntu_claude_image(),
+            "test -d /sandbox/.claude/skills/my-skill",
+        );
+        assert!(
+            !out.status.success(),
+            "skill directory should not be present in image built without skills"
+        );
+    }
+}
+
+mod skills_opencode {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn skill_dir_present_in_opencode_skills_path() {
+        let out = run_in_image(
+            ubuntu_opencode_skills_image(),
+            "test -d /sandbox/.opencode/skills/my-skill",
+        );
+        assert!(
+            out.status.success(),
+            "skill directory not found in /sandbox/.opencode/skills/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_file_present_in_skill_dir() {
+        let out = run_in_image(
+            ubuntu_opencode_skills_image(),
+            "test -f /sandbox/.opencode/skills/my-skill/SKILL.md",
+        );
+        assert!(
+            out.status.success(),
+            "SKILL.md not found in /sandbox/.opencode/skills/my-skill/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_dir_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_opencode_skills_image(),
+            "stat -c '%U' /sandbox/.opencode/skills/my-skill",
+        );
+        assert!(out.status.success(), "failed to stat skill directory");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "skill directory not owned by sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn skill_not_present_in_image_without_skills() {
+        let out = run_in_image(
+            ubuntu_opencode_image(),
+            "test -d /sandbox/.opencode/skills/my-skill",
+        );
+        assert!(
+            !out.status.success(),
+            "skill directory should not be present in image built without skills"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -1026,6 +1198,8 @@ fn cleanup_images() {
         "openshell-test-ubuntu-claude-settings:integration",
         "openshell-test-ubuntu-claude-with-claude-json:integration",
         "openshell-test-ubuntu-opencode-settings:integration",
+        "openshell-test-ubuntu-claude-skills:integration",
+        "openshell-test-ubuntu-opencode-skills:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
