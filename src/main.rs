@@ -68,65 +68,53 @@ fn main() {
         _ => LevelFilter::Debug,
     };
     env_logger::Builder::new().filter_level(log_level).init();
-    let config = config::load(cli.config.clone()).unwrap_or_else(|e| {
-        eprintln!("Error reading config file: {e}");
+    if let Err(e) = run(
+        &cli.tag,
+        cli.config,
+        Path::new("."),
+        cli.agent,
+        cli.inference,
+        &build::PodmanRunner,
+    ) {
+        eprintln!("Error: {e}");
         std::process::exit(1);
-    });
-    let workspace = workspace::load().unwrap_or_else(|e| {
-        eprintln!("Error reading workspace file: {e}");
-        std::process::exit(1);
-    });
-    let agent = cli.agent.map(agent::from_kind);
-    let inference = cli.inference.map(inference::from_kind);
+    }
+}
+
+fn run(
+    tag: &str,
+    config_path: Option<PathBuf>,
+    workspace_base: &Path,
+    agent_kind: Option<agent::AgentKind>,
+    inference_kind: Option<inference::InferenceKind>,
+    runner: &dyn build::Runner,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = config::load(config_path.clone())?;
+    let workspace = workspace::load_from(workspace_base)?;
+    let agent = agent_kind.map(agent::from_kind);
+    let inference = inference_kind.map(inference::from_kind);
     let context_dir = tempfile::Builder::new()
         .prefix("openshell-image-builder")
-        .tempdir()
-        .unwrap_or_else(|e| {
-            eprintln!("Error creating build context directory: {e}");
-            std::process::exit(1);
-        });
-    let features = feature::stage_all(workspace.as_ref(), context_dir.path()).unwrap_or_else(|e| {
-        eprintln!("Error staging features: {e}");
-        std::process::exit(1);
-    });
-    let has_agent_settings = agent.as_deref().is_some_and(|a| {
-        let settings_dir = match config::agent_settings_dir(cli.config.as_deref(), a.id()) {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!("Error finding agent settings directory: {e}");
-                std::process::exit(1);
-            }
-        };
-        stage_agent_settings(a, settings_dir.as_deref(), context_dir.path()).unwrap_or_else(|e| {
-            eprintln!("Error staging agent settings: {e}");
-            std::process::exit(1);
-        })
-    });
-    let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())
-        .unwrap_or_else(|e| {
-            eprintln!("Error staging skills: {e}");
-            std::process::exit(1);
-        });
-    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref());
-    std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml).unwrap_or_else(|e| {
-        eprintln!("Error writing policy.yaml to build context: {e}");
-        std::process::exit(1);
-    });
+        .tempdir()?;
+    let features = feature::stage_all(workspace.as_ref(), context_dir.path())?;
+    let has_agent_settings = if let Some(a) = agent.as_deref() {
+        let settings_dir = config::agent_settings_dir(config_path.as_deref(), a.id())?;
+        stage_agent_settings(a, settings_dir.as_deref(), context_dir.path())?
+    } else {
+        false
+    };
+    let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())?;
+    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref())?;
+    std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
     let output = containerfile::generate(
         &config,
         agent.as_deref(),
         &features,
         has_agent_settings,
         &skill_names,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Error generating Containerfile: {e}");
-        std::process::exit(1);
-    });
-    build::build(&output, &cli.tag, &build::PodmanRunner, context_dir.path()).unwrap_or_else(|e| {
-        eprintln!("Error building image: {e}");
-        std::process::exit(1);
-    });
+    )?;
+    build::build(&output, tag, runner, context_dir.path())?;
+    Ok(())
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -228,17 +216,11 @@ fn build_policy(
     base_yaml: &str,
     agent: Option<&dyn agent::Agent>,
     inference: Option<&dyn inference::Inference>,
-) -> String {
-    let mut sandbox_policy = policy::parse_sandbox_policy(base_yaml).unwrap_or_else(|e| {
-        eprintln!("Error parsing base policy.yaml: {e}");
-        std::process::exit(1);
-    });
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut sandbox_policy = policy::parse_sandbox_policy(base_yaml)?;
     if let (Some(inference), Some(agent)) = (inference, agent) {
         let inference_yaml = inference.policy_yaml(agent.binary_path());
-        let inference_policy = policy::parse_sandbox_policy(&inference_yaml).unwrap_or_else(|e| {
-            eprintln!("Error parsing inference policy: {e}");
-            std::process::exit(1);
-        });
+        let inference_policy = policy::parse_sandbox_policy(&inference_yaml)?;
         sandbox_policy
             .network_policies
             .extend(inference_policy.network_policies);
@@ -246,25 +228,30 @@ fn build_policy(
     if let Some(agent) = agent {
         let agent_yaml = agent.policy_yaml();
         if !agent_yaml.is_empty() {
-            let agent_policy = policy::parse_sandbox_policy(agent_yaml).unwrap_or_else(|e| {
-                eprintln!("Error parsing agent policy: {e}");
-                std::process::exit(1);
-            });
+            let agent_policy = policy::parse_sandbox_policy(agent_yaml)?;
             sandbox_policy
                 .network_policies
                 .extend(agent_policy.network_policies);
         }
     }
-    policy::serialize_sandbox_policy(&sandbox_policy).unwrap_or_else(|e| {
-        eprintln!("Error serializing policy.yaml: {e}");
-        std::process::exit(1);
-    })
+    Ok(policy::serialize_sandbox_policy(&sandbox_policy)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::process::{Command, ExitStatus};
+
+    struct FakeRunner(i32);
+
+    impl build::Runner for FakeRunner {
+        fn run(&self, _cmd: &mut Command) -> std::io::Result<ExitStatus> {
+            Ok(Command::new("sh")
+                .args(["-c", &format!("exit {}", self.0)])
+                .status()?)
+        }
+    }
 
     #[test]
     fn version_matches_cargo_toml() {
@@ -274,19 +261,19 @@ mod tests {
 
     #[test]
     fn build_policy_without_agent_has_no_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, None, None);
+        let yaml = build_policy(BASE_POLICY_YAML, None, None).unwrap();
         assert!(!yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_with_claude_agent_includes_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None);
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None).unwrap();
         assert!(yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_without_inference_has_no_anthropic_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None);
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None).unwrap();
         assert!(!yaml.contains("api.anthropic.com"));
     }
 
@@ -296,7 +283,8 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
-        );
+        )
+        .unwrap();
         assert!(yaml.contains("api.anthropic.com"));
     }
 
@@ -306,7 +294,8 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
-        );
+        )
+        .unwrap();
         assert!(yaml.contains("/sandbox/.local/bin/claude"));
     }
 
@@ -316,7 +305,8 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::VertexAiInference),
-        );
+        )
+        .unwrap();
         assert!(yaml.contains("aiplatform.googleapis.com"));
     }
 
@@ -552,5 +542,63 @@ mod tests {
         let mut names = stage_skills(Some(&ws), Some(&agent::ClaudeAgent), context.path()).unwrap();
         names.sort();
         assert_eq!(names, vec!["skill-a", "skill-b"]);
+    }
+
+    // run
+
+    #[test]
+    fn run_with_no_agent_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            None,
+            None,
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_with_claude_agent_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            Some(agent::AgentKind::Claude),
+            None,
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_with_claude_agent_and_anthropic_inference_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            Some(agent::AgentKind::Claude),
+            Some(inference::InferenceKind::Anthropic),
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_returns_error_when_runner_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            None,
+            None,
+            &FakeRunner(1),
+        );
+        assert!(result.is_err());
     }
 }

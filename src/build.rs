@@ -70,7 +70,7 @@ impl From<std::io::Error> for BuildError {
 pub fn build(
     containerfile: &str,
     tag: &str,
-    runner: &impl Runner,
+    runner: &dyn Runner,
     context_dir: &Path,
 ) -> Result<(), BuildError> {
     let mut tmpfile = NamedTempFile::new()?;

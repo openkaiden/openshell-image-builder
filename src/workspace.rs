@@ -20,11 +20,9 @@ pub use kdn_workspace_configuration::WorkspaceConfiguration;
 
 const WORKSPACE_PATH: &str = ".kaiden/workspace.json";
 
-pub fn load() -> Result<Option<WorkspaceConfiguration>, Box<dyn std::error::Error>> {
-    load_from(Path::new("."))
-}
-
-fn load_from(base: &Path) -> Result<Option<WorkspaceConfiguration>, Box<dyn std::error::Error>> {
+pub(crate) fn load_from(
+    base: &Path,
+) -> Result<Option<WorkspaceConfiguration>, Box<dyn std::error::Error>> {
     let path = base.join(WORKSPACE_PATH);
     if !path.exists() {
         return Ok(None);
