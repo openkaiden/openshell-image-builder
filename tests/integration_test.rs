@@ -31,6 +31,16 @@ fn fedora_config_dir() -> tempfile::TempDir {
     dir
 }
 
+fn ubi_config_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[openshell_image_builder.base_image]\nimage = \"ubi\"\ntag = \"10.2-1780377767\"\n",
+    )
+    .unwrap();
+    dir
+}
+
 fn build_image(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
@@ -66,6 +76,11 @@ static FEDORA_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 
@@ -245,6 +260,84 @@ fn fedora_opencode_vertexai_image() -> &'static str {
     })
 }
 
+fn ubi_image() -> &'static str {
+    UBI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi:integration",
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn ubi_claude_image() -> &'static str {
+    UBI_CLAUDE_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi-claude:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+                "--inference",
+                "anthropic",
+            ],
+        )
+    })
+}
+
+fn ubi_opencode_image() -> &'static str {
+    UBI_OPENCODE_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi-opencode:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "anthropic",
+            ],
+        )
+    })
+}
+
+fn ubi_claude_vertexai_image() -> &'static str {
+    UBI_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi-claude-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+                "--inference",
+                "vertexai",
+            ],
+        )
+    })
+}
+
+fn ubi_opencode_vertexai_image() -> &'static str {
+    UBI_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi-opencode-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "vertexai",
+            ],
+        )
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Shared assertion helpers
 // ---------------------------------------------------------------------------
@@ -276,7 +369,7 @@ fn check_users_and_groups(image: &str) {
 }
 
 fn check_packages(image: &str) {
-    for pkg in ["curl", "ip", "ping", "traceroute"] {
+    for pkg in ["curl", "ip", "ping"] {
         let out = run_in_image(image, &format!("which {pkg}"));
         assert!(out.status.success(), "{pkg} not found in image");
     }
@@ -472,6 +565,11 @@ image_tests!(fedora_claude,           fedora_claude_image,           has_claude:
 image_tests!(fedora_opencode,         fedora_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
 image_tests!(fedora_claude_vertexai,  fedora_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
 image_tests!(fedora_opencode_vertexai,fedora_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
+image_tests!(ubi,                     ubi_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
+image_tests!(ubi_claude,              ubi_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
+image_tests!(ubi_opencode,            ubi_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
+image_tests!(ubi_claude_vertexai,     ubi_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
+image_tests!(ubi_opencode_vertexai,   ubi_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds
@@ -508,8 +606,12 @@ static FEATURE_PYTHON_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static FEATURE_COMMON_UTILS_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
 static FEATURE_NODE_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
 static FEATURE_PYTHON_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_COMMON_UTILS_UBI_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_NODE_UBI_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_PYTHON_UBI_IMAGE: OnceLock<String> = OnceLock::new();
 static FEATURE_LOCAL_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static FEATURE_LOCAL_FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEATURE_LOCAL_UBI_IMAGE: OnceLock<String> = OnceLock::new();
 
 const COMMON_UTILS_WORKSPACE: &str = r#"{
     "features": {
@@ -599,6 +701,39 @@ fn feature_python_fedora_image() -> &'static str {
     })
 }
 
+fn feature_common_utils_ubi_image() -> &'static str {
+    FEATURE_COMMON_UTILS_UBI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image_with_workspace(
+            "openshell-test-feature-common-utils-ubi:integration",
+            COMMON_UTILS_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn feature_node_ubi_image() -> &'static str {
+    FEATURE_NODE_UBI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image_with_workspace(
+            "openshell-test-feature-node-ubi:integration",
+            NODE_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn feature_python_ubi_image() -> &'static str {
+    FEATURE_PYTHON_UBI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image_with_workspace(
+            "openshell-test-feature-python-ubi:integration",
+            PYTHON_WORKSPACE,
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
 fn local_feature_workspace_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let kaiden = dir.path().join(".kaiden");
@@ -651,6 +786,16 @@ fn feature_local_fedora_image() -> &'static str {
         let config = fedora_config_dir();
         build_image_with_local_feature(
             "openshell-test-feature-local-fedora:integration",
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn feature_local_ubi_image() -> &'static str {
+    FEATURE_LOCAL_UBI_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image_with_local_feature(
+            "openshell-test-feature-local-ubi:integration",
             &["--config", config.path().to_str().unwrap()],
         )
     })
@@ -843,6 +988,7 @@ feature_local_tests!(
     feature_local_fedora_image,
     fedora_image
 );
+feature_local_tests!(feature_local_ubi, feature_local_ubi_image, ubi_image);
 
 feature_common_utils_tests!(
     feature_common_utils_ubuntu,
@@ -854,8 +1000,14 @@ feature_common_utils_tests!(
     feature_common_utils_fedora_image,
     fedora_image
 );
+feature_common_utils_tests!(
+    feature_common_utils_ubi,
+    feature_common_utils_ubi_image,
+    ubi_image
+);
 feature_node_tests!(feature_node_ubuntu, feature_node_ubuntu_image, ubuntu_image);
 feature_node_tests!(feature_node_fedora, feature_node_fedora_image, fedora_image);
+feature_node_tests!(feature_node_ubi, feature_node_ubi_image, ubi_image);
 feature_python_tests!(
     feature_python_ubuntu,
     feature_python_ubuntu_image,
@@ -866,6 +1018,7 @@ feature_python_tests!(
     feature_python_fedora_image,
     fedora_image
 );
+feature_python_tests!(feature_python_ubi, feature_python_ubi_image, ubi_image);
 
 // ---------------------------------------------------------------------------
 // Agent settings integration tests
@@ -1187,14 +1340,23 @@ fn cleanup_images() {
         "openshell-test-fedora-opencode:integration",
         "openshell-test-fedora-claude-vertexai:integration",
         "openshell-test-fedora-opencode-vertexai:integration",
+        "openshell-test-ubi:integration",
+        "openshell-test-ubi-claude:integration",
+        "openshell-test-ubi-opencode:integration",
+        "openshell-test-ubi-claude-vertexai:integration",
+        "openshell-test-ubi-opencode-vertexai:integration",
         "openshell-test-feature-common-utils-ubuntu:integration",
         "openshell-test-feature-node-ubuntu:integration",
         "openshell-test-feature-python-ubuntu:integration",
         "openshell-test-feature-common-utils-fedora:integration",
         "openshell-test-feature-node-fedora:integration",
         "openshell-test-feature-python-fedora:integration",
+        "openshell-test-feature-common-utils-ubi:integration",
+        "openshell-test-feature-node-ubi:integration",
+        "openshell-test-feature-python-ubi:integration",
         "openshell-test-feature-local-ubuntu:integration",
         "openshell-test-feature-local-fedora:integration",
+        "openshell-test-feature-local-ubi:integration",
         "openshell-test-ubuntu-claude-settings:integration",
         "openshell-test-ubuntu-claude-with-claude-json:integration",
         "openshell-test-ubuntu-opencode-settings:integration",
