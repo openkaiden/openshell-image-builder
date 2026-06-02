@@ -44,7 +44,40 @@ pub fn generate(
 ) -> Result<String, ContainerfileError> {
     let tag = &config.base_image.tag;
     let system_stage = match config.base_image.image.as_str() {
-        "fedora" => fedora_system_stage(tag),
+        "fedora" => dnf_system_stage(
+            "registry.fedoraproject.org/fedora",
+            tag,
+            &[
+                "bind-utils",
+                "ca-certificates",
+                "curl",
+                "iproute",
+                "iptables",
+                "iputils",
+                "net-tools",
+                "nftables",
+                "nmap-ncat",
+                "openssh-server",
+                "procps-ng",
+                "traceroute",
+                "which",
+            ],
+        ),
+        "ubi" => dnf_system_stage(
+            "registry.access.redhat.com/ubi10/ubi",
+            tag,
+            &[
+                "bind-utils",
+                "ca-certificates",
+                "iputils",
+                "net-tools",
+                "nftables",
+                "nmap-ncat",
+                "openssh-server",
+                "procps-ng",
+                "which",
+            ],
+        ),
         "ubuntu" => ubuntu_system_stage(tag),
         image => {
             return Err(ContainerfileError::NotSupported {
@@ -166,28 +199,21 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
     )
 }
 
-fn fedora_system_stage(tag: &str) -> String {
+fn dnf_system_stage(base_image: &str, tag: &str, packages: &[&str]) -> String {
+    let pkg_lines = packages
+        .iter()
+        .map(|p| format!("        {p} \\"))
+        .collect::<Vec<_>>()
+        .join("\n");
     format!(
         r#"# System base
-FROM registry.fedoraproject.org/fedora:{tag} AS system
+FROM {base_image}:{tag} AS system
 
 WORKDIR /sandbox
 
 # Core system dependencies
 RUN dnf install -y --setopt=install_weak_deps=False \
-        bind-utils \
-        ca-certificates \
-        curl \
-        iproute \
-        iptables \
-        iputils \
-        net-tools \
-        nftables \
-        nmap-ncat \
-        openssh-server \
-        procps-ng \
-        traceroute \
-        which \
+{pkg_lines}
     && dnf clean all
 
 RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
@@ -253,6 +279,16 @@ mod tests {
             base_image: BaseImageConfig {
                 image: "fedora".to_string(),
                 tag: "latest".to_string(),
+            },
+        }
+    }
+
+    fn ubi_config() -> Config {
+        Config {
+            version: 1,
+            base_image: BaseImageConfig {
+                image: "ubi".to_string(),
+                tag: "10.2-1780377767".to_string(),
             },
         }
     }
@@ -381,6 +417,54 @@ mod tests {
     fn fedora_without_agent_omits_install() {
         let content = generate(&fedora_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn ubi_generates_successfully() {
+        assert!(generate(&ubi_config(), None, &[], false, &[]).is_ok());
+    }
+
+    #[test]
+    fn ubi_containerfile_contains_tag() {
+        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        assert!(
+            content.contains("FROM registry.access.redhat.com/ubi10/ubi:10.2-1780377767 AS system")
+        );
+    }
+
+    #[test]
+    fn ubi_containerfile_tag_is_substituted() {
+        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        assert!(!content.contains("{tag}"));
+    }
+
+    #[test]
+    fn ubi_with_agent_includes_install() {
+        let content = generate(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        assert!(content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn ubi_agent_install_runs_as_sandbox_user() {
+        let content = generate(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        let install_pos = content.find("RUN echo mock-agent").unwrap();
+        assert!(
+            install_pos > user_pos,
+            "agent install must appear after USER sandbox"
+        );
+    }
+
+    #[test]
+    fn ubi_without_agent_omits_install() {
+        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        assert!(!content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn ubi_copies_policy_yaml() {
+        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
     #[test]
