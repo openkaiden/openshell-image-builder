@@ -4,7 +4,7 @@
 
 OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/OpenShell-Community), but they are general-purpose. `openshell-image-builder` lets you build your own: lightweight, workspace-specific images that contain only what you need — without writing a Containerfile by hand.
 
-- **Base image selection** — Ubuntu, Fedora, or Red Hat UBI, any tag.
+- **Base image selection** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag.
 - **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints. Settings files can be embedded into the image from a local directory.
 - **Inference configuration** — scoped network access to LLM backends.
 - **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
@@ -61,15 +61,15 @@ If a directory is given explicitly (via `--config` or the environment variable) 
 version = 1
 
 [openshell_image_builder.base_image]
-image = "ubuntu"   # "ubuntu", "fedora", or "ubi"
-tag   = "24.04"    # ubuntu: "24.04", "22.04", … — fedora: "latest", "43", "42", … — ubi: "10.2-1780377767", …
+image = "ubuntu"   # "ubuntu", "fedora", "ubi", or "hummingbird"
+tag   = "24.04"    # ubuntu: "24.04", "22.04", … — fedora: "latest", "43", "42", … — ubi: "10.2-1780377767", … — hummingbird: "latest-builder", …
 ```
 
 | Field                                      | Default  | Description                  |
 | ------------------------------------------ | -------- | ---------------------------- |
 | `openshell_image_builder.version`          | `1`      | Configuration schema version |
-| `openshell_image_builder.base_image.image` | `ubuntu` | Base image name (`ubuntu`, `fedora`, or `ubi`) |
-| `openshell_image_builder.base_image.tag`   | `24.04`  | Base image tag — Ubuntu: `24.04`, `22.04`, …; Fedora: `latest`, `43`, `42`, …; UBI: `10.2-1780377767`, … |
+| `openshell_image_builder.base_image.image` | `ubuntu` | Base image name (`ubuntu`, `fedora`, `ubi`, or `hummingbird`) |
+| `openshell_image_builder.base_image.tag`   | `24.04`  | Base image tag — Ubuntu: `24.04`, `22.04`, …; Fedora: `latest`, `43`, `42`, …; UBI: `10.2-1780377767`, …; Hummingbird: `latest-builder`, … |
 
 ### Loading from a specific config directory
 

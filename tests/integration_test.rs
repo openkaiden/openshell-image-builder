@@ -41,6 +41,16 @@ fn ubi_config_dir() -> tempfile::TempDir {
     dir
 }
 
+fn hummingbird_config_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[openshell_image_builder.base_image]\nimage = \"hummingbird\"\ntag = \"latest-builder\"\n",
+    )
+    .unwrap();
+    dir
+}
+
 fn build_image(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
@@ -81,6 +91,11 @@ static UBI_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 
@@ -338,6 +353,84 @@ fn ubi_opencode_vertexai_image() -> &'static str {
     })
 }
 
+fn hummingbird_image() -> &'static str {
+    HUMMINGBIRD_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird:integration",
+            &["--config", config.path().to_str().unwrap()],
+        )
+    })
+}
+
+fn hummingbird_claude_image() -> &'static str {
+    HUMMINGBIRD_CLAUDE_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird-claude:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+                "--inference",
+                "anthropic",
+            ],
+        )
+    })
+}
+
+fn hummingbird_opencode_image() -> &'static str {
+    HUMMINGBIRD_OPENCODE_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird-opencode:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "anthropic",
+            ],
+        )
+    })
+}
+
+fn hummingbird_claude_vertexai_image() -> &'static str {
+    HUMMINGBIRD_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird-claude-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+                "--inference",
+                "vertexai",
+            ],
+        )
+    })
+}
+
+fn hummingbird_opencode_vertexai_image() -> &'static str {
+    HUMMINGBIRD_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird-opencode-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "vertexai",
+            ],
+        )
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Shared assertion helpers
 // ---------------------------------------------------------------------------
@@ -570,6 +663,11 @@ image_tests!(ubi_claude,              ubi_claude_image,              has_claude:
 image_tests!(ubi_opencode,            ubi_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
 image_tests!(ubi_claude_vertexai,     ubi_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
 image_tests!(ubi_opencode_vertexai,   ubi_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
+image_tests!(hummingbird,                     hummingbird_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
+image_tests!(hummingbird_claude,              hummingbird_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
+image_tests!(hummingbird_opencode,            hummingbird_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
+image_tests!(hummingbird_claude_vertexai,     hummingbird_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
+image_tests!(hummingbird_opencode_vertexai,   hummingbird_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds

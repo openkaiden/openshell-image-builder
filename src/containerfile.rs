@@ -78,6 +78,11 @@ pub fn generate(
                 "which",
             ],
         ),
+        "hummingbird" => dnf_system_stage(
+            "registry.access.redhat.com/hi/core-runtime",
+            tag,
+            &["bind-utils", "openssh-server", "procps-ng", "which"],
+        ),
         "ubuntu" => ubuntu_system_stage(tag),
         image => {
             return Err(ContainerfileError::NotSupported {
@@ -208,10 +213,10 @@ fn dnf_system_stage(base_image: &str, tag: &str, packages: &[&str]) -> String {
     format!(
         r#"# System base
 FROM {base_image}:{tag} AS system
-
 WORKDIR /sandbox
 
 # Core system dependencies
+USER 0
 RUN dnf install -y --setopt=install_weak_deps=False \
 {pkg_lines}
     && dnf clean all
@@ -289,6 +294,16 @@ mod tests {
             base_image: BaseImageConfig {
                 image: "ubi".to_string(),
                 tag: "10.2-1780377767".to_string(),
+            },
+        }
+    }
+
+    fn hummingbird_config() -> Config {
+        Config {
+            version: 1,
+            base_image: BaseImageConfig {
+                image: "hummingbird".to_string(),
+                tag: "latest-builder".to_string(),
             },
         }
     }
@@ -464,6 +479,56 @@ mod tests {
     #[test]
     fn ubi_copies_policy_yaml() {
         let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
+    }
+
+    #[test]
+    fn hummingbird_generates_successfully() {
+        assert!(generate(&hummingbird_config(), None, &[], false, &[]).is_ok());
+    }
+
+    #[test]
+    fn hummingbird_containerfile_contains_tag() {
+        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        assert!(
+            content.contains(
+                "FROM registry.access.redhat.com/hi/core-runtime:latest-builder AS system"
+            )
+        );
+    }
+
+    #[test]
+    fn hummingbird_containerfile_tag_is_substituted() {
+        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        assert!(!content.contains("{tag}"));
+    }
+
+    #[test]
+    fn hummingbird_with_agent_includes_install() {
+        let content = generate(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        assert!(content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn hummingbird_agent_install_runs_as_sandbox_user() {
+        let content = generate(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        let install_pos = content.find("RUN echo mock-agent").unwrap();
+        assert!(
+            install_pos > user_pos,
+            "agent install must appear after USER sandbox"
+        );
+    }
+
+    #[test]
+    fn hummingbird_without_agent_omits_install() {
+        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        assert!(!content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn hummingbird_copies_policy_yaml() {
+        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
