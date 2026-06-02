@@ -42,25 +42,20 @@ pub fn generate(
     with_agent_settings: bool,
     skill_names: &[String],
 ) -> Result<String, ContainerfileError> {
-    match config.base_image.image.as_str() {
-        "fedora" => Ok(fedora(
-            config,
-            agent,
-            features,
-            with_agent_settings,
-            skill_names,
-        )),
-        "ubuntu" => Ok(ubuntu(
-            config,
-            agent,
-            features,
-            with_agent_settings,
-            skill_names,
-        )),
-        image => Err(ContainerfileError::NotSupported {
-            image: image.to_string(),
-        }),
-    }
+    let tag = &config.base_image.tag;
+    let system_stage = match config.base_image.image.as_str() {
+        "fedora" => fedora_system_stage(tag),
+        "ubuntu" => ubuntu_system_stage(tag),
+        image => {
+            return Err(ContainerfileError::NotSupported {
+                image: image.to_string(),
+            });
+        }
+    };
+    Ok(format!(
+        "{system_stage}\n{}",
+        final_stage(agent, features, with_agent_settings, skill_names)
+    ))
 }
 
 fn skills_section(agent: Option<&dyn Agent>, skill_names: &[String]) -> String {
@@ -140,31 +135,12 @@ fn features_section(features: &[StagedFeature]) -> String {
     out
 }
 
-fn ubuntu(
-    config: &Config,
-    agent: Option<&dyn Agent>,
-    features: &[StagedFeature],
-    with_agent_settings: bool,
-    skill_names: &[String],
-) -> String {
-    let tag = &config.base_image.tag;
-    let agent_section = agent
-        .map(|a| format!("{}\n\n", a.install()))
-        .unwrap_or_default();
-    let agent_settings_section = if with_agent_settings {
-        "COPY --chown=sandbox:sandbox agent-settings/ /sandbox/\n\n"
-    } else {
-        ""
-    };
-    let skills_section = skills_section(agent, skill_names);
-    let features_section = features_section(features);
+fn ubuntu_system_stage(tag: &str) -> String {
     format!(
         r#"# System base
 FROM docker.io/library/ubuntu:{tag} AS system
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /sandbox
 
@@ -186,49 +162,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
     groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox
-
-# Final base image
-FROM system AS final
-
-{features_section}COPY policy.yaml /etc/openshell/policy.yaml
-
-RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
-        > /sandbox/.bashrc && \
-    printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
-    chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
-    chown -R sandbox:sandbox /sandbox
-
-USER sandbox
-
-{agent_settings_section}{skills_section}{agent_section}ENTRYPOINT ["/bin/bash"]
 "#
     )
 }
 
-fn fedora(
-    config: &Config,
-    agent: Option<&dyn Agent>,
-    features: &[StagedFeature],
-    with_agent_settings: bool,
-    skill_names: &[String],
-) -> String {
-    let tag = &config.base_image.tag;
-    let agent_section = agent
-        .map(|a| format!("{}\n\n", a.install()))
-        .unwrap_or_default();
-    let agent_settings_section = if with_agent_settings {
-        "COPY --chown=sandbox:sandbox agent-settings/ /sandbox/\n\n"
-    } else {
-        ""
-    };
-    let skills_section = skills_section(agent, skill_names);
-    let features_section = features_section(features);
+fn fedora_system_stage(tag: &str) -> String {
     format!(
         r#"# System base
 FROM registry.fedoraproject.org/fedora:{tag} AS system
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
 
 WORKDIR /sandbox
 
@@ -251,8 +192,28 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 
 RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
     groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox
+"#
+    )
+}
 
-# Final base image
+fn final_stage(
+    agent: Option<&dyn Agent>,
+    features: &[StagedFeature],
+    with_agent_settings: bool,
+    skill_names: &[String],
+) -> String {
+    let agent_section = agent
+        .map(|a| format!("{}\n\n", a.install()))
+        .unwrap_or_default();
+    let agent_settings_section = if with_agent_settings {
+        "COPY --chown=sandbox:sandbox agent-settings/ /sandbox/\n\n"
+    } else {
+        ""
+    };
+    let skills_section = skills_section(agent, skill_names);
+    let features_section = features_section(features);
+    format!(
+        r#"# Final base image
 FROM system AS final
 
 {features_section}COPY policy.yaml /etc/openshell/policy.yaml
