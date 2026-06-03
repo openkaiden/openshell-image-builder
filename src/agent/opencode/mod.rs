@@ -16,6 +16,7 @@
 
 mod anthropic;
 mod ollama;
+mod vertexai;
 
 use std::collections::HashMap;
 
@@ -57,11 +58,17 @@ impl Agent for OpencodeAgent {
         files: HashMap<String, String>,
         inference: Option<&inference::InferenceKind>,
         base_url: Option<&str>,
+        model: Option<&str>,
     ) -> HashMap<String, String> {
-        match (inference, base_url) {
-            (Some(inference::InferenceKind::Ollama), Some(url)) => ollama::configure(files, url),
-            (Some(inference::InferenceKind::Anthropic), Some(url)) => {
-                anthropic::configure(files, url)
+        match inference {
+            Some(inference::InferenceKind::Ollama) if base_url.is_some() => {
+                ollama::configure(files, base_url.unwrap(), model)
+            }
+            Some(inference::InferenceKind::Anthropic) if base_url.is_some() || model.is_some() => {
+                anthropic::configure(files, base_url, model)
+            }
+            Some(inference::InferenceKind::VertexAi) if model.is_some() => {
+                vertexai::configure(files, model.unwrap())
             }
             _ => files,
         }
@@ -193,7 +200,7 @@ mod tests {
     fn set_inference_with_none_returns_files_unchanged() {
         let mut files = HashMap::new();
         files.insert("existing.json".to_string(), "content".to_string());
-        let result = OpencodeAgent.set_inference(files.clone(), None, None);
+        let result = OpencodeAgent.set_inference(files.clone(), None, None, None);
         assert_eq!(result, files);
     }
 
@@ -203,6 +210,7 @@ mod tests {
             HashMap::new(),
             Some(&inference::InferenceKind::Ollama),
             Some("http://host.openshell.internal:11434/v1"),
+            None,
         );
         assert!(result.contains_key(".config/opencode/config.json"));
     }
@@ -215,17 +223,19 @@ mod tests {
             files.clone(),
             Some(&inference::InferenceKind::Ollama),
             None,
+            None,
         );
         assert_eq!(result, files);
     }
 
     #[test]
-    fn set_inference_with_anthropic_without_url_returns_files_unchanged() {
+    fn set_inference_with_anthropic_without_url_or_model_returns_files_unchanged() {
         let mut files = HashMap::new();
         files.insert("existing.json".to_string(), "content".to_string());
         let result = OpencodeAgent.set_inference(
             files.clone(),
             Some(&inference::InferenceKind::Anthropic),
+            None,
             None,
         );
         assert_eq!(result, files);
@@ -237,6 +247,7 @@ mod tests {
             HashMap::new(),
             Some(&inference::InferenceKind::Anthropic),
             Some("https://my-anthropic-proxy.example.com"),
+            None,
         );
         assert!(result.contains_key(".config/opencode/config.json"));
     }
@@ -247,8 +258,44 @@ mod tests {
             HashMap::new(),
             Some(&inference::InferenceKind::Anthropic),
             Some("https://my-anthropic-proxy.example.com"),
+            None,
         );
         let config = result.get(".config/opencode/config.json").unwrap();
         assert!(config.contains("https://my-anthropic-proxy.example.com"));
+    }
+
+    #[test]
+    fn set_inference_with_anthropic_and_model_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::Anthropic),
+            None,
+            Some("claude-opus-4-5"),
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_vertexai_and_model_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::VertexAi),
+            None,
+            Some("vertex/claude-opus-4-5"),
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_vertexai_without_model_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("existing.json".to_string(), "content".to_string());
+        let result = OpencodeAgent.set_inference(
+            files.clone(),
+            Some(&inference::InferenceKind::VertexAi),
+            None,
+            None,
+        );
+        assert_eq!(result, files);
     }
 }

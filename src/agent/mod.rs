@@ -43,20 +43,24 @@ pub trait Agent {
     }
     /// Merges inference provider configuration into `files` and returns the result.
     /// `base_url` overrides the provider's default endpoint when `Some`.
+    /// `model` sets the default model when `Some`.
     fn set_inference(
         &self,
         files: HashMap<String, String>,
         _inference: Option<&inference::InferenceKind>,
         _base_url: Option<&str>,
+        _model: Option<&str>,
     ) -> HashMap<String, String> {
         files
     }
     /// Returns environment variables to bake into the image for this agent.
     /// `endpoint` overrides the inference provider's default URL when `Some`.
+    /// `model` sets the default model when `Some`.
     fn env_vars(
         &self,
         _inference: Option<&inference::InferenceKind>,
         _endpoint: Option<&str>,
+        _model: Option<&str>,
     ) -> HashMap<String, String> {
         HashMap::new()
     }

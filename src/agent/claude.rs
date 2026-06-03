@@ -20,6 +20,7 @@ use super::Agent;
 use crate::inference;
 
 const CLAUDE_CONFIG_FILE: &str = ".claude.json";
+const CLAUDE_SETTINGS_FILE: &str = ".claude/settings.json";
 const SANDBOX_HOME: &str = "/sandbox";
 
 pub struct ClaudeAgent;
@@ -66,10 +67,34 @@ impl Agent for ClaudeAgent {
         ]
     }
 
+    fn set_inference(
+        &self,
+        mut files: HashMap<String, String>,
+        _inference: Option<&inference::InferenceKind>,
+        _base_url: Option<&str>,
+        model: Option<&str>,
+    ) -> HashMap<String, String> {
+        if let Some(m) = model {
+            let content = files
+                .get(CLAUDE_SETTINGS_FILE)
+                .cloned()
+                .unwrap_or_else(|| "{}".to_string());
+            let mut config: serde_json::Value =
+                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+            config["model"] = serde_json::json!(m);
+            files.insert(
+                CLAUDE_SETTINGS_FILE.to_string(),
+                serde_json::to_string_pretty(&config).expect("valid json value"),
+            );
+        }
+        files
+    }
+
     fn env_vars(
         &self,
         inference: Option<&inference::InferenceKind>,
         endpoint: Option<&str>,
+        _model: Option<&str>,
     ) -> HashMap<String, String> {
         let mut vars = HashMap::new();
         if let (Some(inference::InferenceKind::Anthropic), Some(url)) = (inference, endpoint) {
@@ -220,6 +245,7 @@ mod tests {
         let vars = ClaudeAgent.env_vars(
             Some(&inference::InferenceKind::Anthropic),
             Some("https://my-proxy.example.com"),
+            None,
         );
         assert_eq!(
             vars.get("ANTHROPIC_BASE_URL").map(String::as_str),
@@ -229,14 +255,44 @@ mod tests {
 
     #[test]
     fn env_vars_with_anthropic_and_no_endpoint_returns_empty() {
-        let vars = ClaudeAgent.env_vars(Some(&inference::InferenceKind::Anthropic), None);
+        let vars = ClaudeAgent.env_vars(Some(&inference::InferenceKind::Anthropic), None, None);
         assert!(vars.is_empty());
     }
 
     #[test]
     fn env_vars_with_no_inference_returns_empty() {
-        let vars = ClaudeAgent.env_vars(None, Some("https://my-proxy.example.com"));
+        let vars = ClaudeAgent.env_vars(None, Some("https://my-proxy.example.com"), None);
         assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn set_inference_with_model_writes_model_to_claude_settings() {
+        let result = ClaudeAgent.set_inference(HashMap::new(), None, None, Some("claude-opus-4-5"));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_SETTINGS_FILE].as_str()).unwrap();
+        assert_eq!(json["model"], "claude-opus-4-5");
+    }
+
+    #[test]
+    fn set_inference_with_model_preserves_existing_claude_settings_fields() {
+        let mut files = HashMap::new();
+        files.insert(
+            CLAUDE_SETTINGS_FILE.to_string(),
+            r#"{"theme": "dark"}"#.to_string(),
+        );
+        let result = ClaudeAgent.set_inference(files, None, None, Some("claude-opus-4-5"));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_SETTINGS_FILE].as_str()).unwrap();
+        assert_eq!(json["model"], "claude-opus-4-5");
+        assert_eq!(json["theme"], "dark");
+    }
+
+    #[test]
+    fn set_inference_without_model_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("other.json".to_string(), "content".to_string());
+        let result = ClaudeAgent.set_inference(files.clone(), None, None, None);
+        assert_eq!(result, files);
     }
 
     #[test]

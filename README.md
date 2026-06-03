@@ -6,7 +6,7 @@ OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/Op
 
 - **Base image selection** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag.
 - **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints. Settings files can be embedded into the image from a local directory.
-- **Inference configuration** — scoped network access to LLM backends, with optional endpoint override (`--endpoint`) to route traffic through a custom URL or proxy.
+- **Inference configuration** — scoped network access to LLM backends, with optional endpoint override (`--endpoint`) to route traffic through a custom URL or proxy, and optional model pin (`--model`) to bake a default model into the image.
 - **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
 - **Sandbox policy** — every image ships `/etc/openshell/policy.yaml`, built from a base policy merged with inference and agent rules.
 
@@ -237,6 +237,39 @@ openshell-image-builder \
   myimage:latest
 ```
 
+### Default model (`--model`)
+
+Use `--model` to bake a default model into the image. The agent uses this model without requiring a runtime flag.
+
+| Agent      | Inference   | Effect |
+| ---------- | ----------- | ------ |
+| `claude`   | any         | Written to `.claude/settings.json` as `"model": "<model>"` |
+| `opencode` | `anthropic` | Written to opencode config as top-level `"model"` field (can be combined with `--endpoint`) |
+| `opencode` | `vertexai`  | Written to opencode config as top-level `"model"` field |
+| `opencode` | `ollama`    | Written to opencode config as top-level `"model": "ollama/<model>"` field; only the specified model is registered in the models map |
+
+```sh
+# Pin Claude Code to a specific model
+openshell-image-builder \
+  --agent claude --inference anthropic \
+  --model claude-opus-4-8 \
+  myimage:latest
+
+# Pin OpenCode to a specific Anthropic model
+openshell-image-builder \
+  --agent opencode --inference anthropic \
+  --model claude-opus-4-8 \
+  myimage:latest
+
+# Pin OpenCode to a specific Ollama model
+openshell-image-builder \
+  --agent opencode --inference ollama \
+  --model qwen3-coder:30b \
+  myimage:latest
+```
+
+The model string is passed through as-is — use whatever identifier your agent and provider expect.
+
 ### Automatic configuration — OpenCode + Ollama
 
 When `--agent opencode --inference ollama` is used, the builder automatically writes `/sandbox/.config/opencode/config.json` to configure OpenCode's Ollama provider:
@@ -258,6 +291,8 @@ When `--agent opencode --inference ollama` is used, the builder automatically wr
   }
 }
 ```
+
+When `--model` is also given, the top-level `"model"` field is added (as `"ollama/<model>"`) and the `models` map is replaced with a single entry for the specified model.
 
 `host.openshell.internal` is the hostname used inside the sandbox to reach the container host, where Ollama is expected to be running on its default port (`11434`). Ollama must be running on the host before the sandbox is started.
 
@@ -378,6 +413,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
 | `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`) |
 | `--endpoint <URL>`         | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
+| `--model <MODEL>`          | Default model for the agent to use (see [Default model](#default-model---model)) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
 
 ## Examples
@@ -388,6 +424,7 @@ openshell-image-builder [OPTIONS] <TAG>
 $ openshell-image-builder \
   --agent claude \
   --inference anthropic \
+  --model claude-sonnet-4-6 \
   sandbox_image:claude_anthropic
 
 $ openshell provider create \
@@ -410,6 +447,7 @@ $ openshell sandbox create \
 $ openshell-image-builder \
   --agent opencode \
   --inference anthropic \
+  --model claude-sonnet-4-6 \
   sandbox_image:opencode_anthropic
 
 $ openshell provider create \
@@ -432,6 +470,7 @@ $ openshell sandbox create \
 $ openshell-image-builder \
   --agent claude \
   --inference vertexai \
+  --model claude-sonnet-4-6 \
   sandbox_image:claude_vertexai
 
 # change value of ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
@@ -465,6 +504,7 @@ Ollama must be running on the host before starting the sandbox.
 $ openshell-image-builder \
   --agent opencode \
   --inference ollama \
+  --model qwen3-coder:30b \
   sandbox_image:opencode_ollama
 
 $ openshell sandbox create \
@@ -473,8 +513,6 @@ $ openshell sandbox create \
   --name opencode_ollama_sandbox \
   --no-auto-providers \
   -- opencode
-
-# select a model with /models
 ```
 
 ### OpenCode agent + Vertex AI models provider
@@ -483,6 +521,7 @@ $ openshell sandbox create \
 $ openshell-image-builder \
   --agent opencode \
   --inference vertexai \
+  --model claude-sonnet-4-6 \
   sandbox_image:opencode_vertexai
 
 # change value of GOOGLE_CLOUD_PROJECT and VERTEX_LOCATION

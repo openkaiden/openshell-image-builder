@@ -59,6 +59,8 @@ struct Cli {
     inference: Option<inference::InferenceKind>,
     #[arg(long, help = "Override the inference provider's default endpoint URL")]
     endpoint: Option<String>,
+    #[arg(long, help = "Default model for the agent to use")]
+    model: Option<String>,
 }
 
 fn main() {
@@ -78,6 +80,7 @@ fn main() {
         cli.agent,
         cli.inference,
         cli.endpoint.as_deref(),
+        cli.model.as_deref(),
         &build::PodmanRunner,
     ) {
         eprintln!("Error: {e}");
@@ -85,6 +88,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
     tag: &str,
     config_path: Option<PathBuf>,
@@ -92,6 +96,7 @@ fn run(
     agent_kind: Option<agent::AgentKind>,
     inference_kind: Option<inference::InferenceKind>,
     endpoint: Option<&str>,
+    model: Option<&str>,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
@@ -121,6 +126,7 @@ fn run(
             settings_dir.as_deref(),
             inference_kind.as_ref(),
             endpoint,
+            model,
             context_dir.path(),
         )?
     } else {
@@ -128,7 +134,7 @@ fn run(
     };
     let agent_env_vars = agent
         .as_deref()
-        .map(|a| a.env_vars(inference_kind.as_ref(), endpoint))
+        .map(|a| a.env_vars(inference_kind.as_ref(), endpoint, model))
         .unwrap_or_default();
     let base_url = resolve_base_url(inference_kind.as_ref(), endpoint);
     let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())?;
@@ -237,6 +243,7 @@ fn stage_agent_settings(
     settings_dir: Option<&Path>,
     inference: Option<&inference::InferenceKind>,
     endpoint: Option<&str>,
+    model: Option<&str>,
     context_dir: &Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let existing = match settings_dir {
@@ -246,7 +253,7 @@ fn stage_agent_settings(
 
     let base_url = resolve_base_url(inference, endpoint);
     let files = agent.skip_onboarding(existing);
-    let files = agent.set_inference(files, inference, base_url.as_deref());
+    let files = agent.set_inference(files, inference, base_url.as_deref(), model);
 
     if settings_dir.is_none() && files.is_empty() {
         return Ok(false);
@@ -475,6 +482,7 @@ mod tests {
             Some(settings.path()),
             None,
             None,
+            None,
             context.path(),
         )
         .unwrap();
@@ -489,6 +497,7 @@ mod tests {
         stage_agent_settings(
             &agent::OpencodeAgent,
             Some(settings.path()),
+            None,
             None,
             None,
             context.path(),
@@ -512,6 +521,7 @@ mod tests {
             Some(settings.path()),
             None,
             None,
+            None,
             context.path(),
         )
         .unwrap();
@@ -531,8 +541,15 @@ mod tests {
     #[test]
     fn stage_agent_settings_returns_false_for_noop_agent_without_settings_dir() {
         let context = tempfile::tempdir().unwrap();
-        let staged =
-            stage_agent_settings(&agent::OpencodeAgent, None, None, None, context.path()).unwrap();
+        let staged = stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            None,
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         assert!(!staged);
     }
 
@@ -540,7 +557,8 @@ mod tests {
     fn stage_agent_settings_creates_claude_json_for_claude_agent_without_settings_dir() {
         let context = tempfile::tempdir().unwrap();
         let staged =
-            stage_agent_settings(&agent::ClaudeAgent, None, None, None, context.path()).unwrap();
+            stage_agent_settings(&agent::ClaudeAgent, None, None, None, None, context.path())
+                .unwrap();
         assert!(staged);
         assert!(
             context
@@ -554,7 +572,7 @@ mod tests {
     #[test]
     fn stage_agent_settings_claude_json_has_onboarding_flags() {
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::ClaudeAgent, None, None, None, context.path()).unwrap();
+        stage_agent_settings(&agent::ClaudeAgent, None, None, None, None, context.path()).unwrap();
         let content =
             std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
                 .unwrap();
@@ -570,6 +588,7 @@ mod tests {
             &agent::OpencodeAgent,
             None,
             Some(&inference::InferenceKind::Ollama),
+            None,
             None,
             context.path(),
         )
@@ -701,6 +720,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -714,6 +734,7 @@ mod tests {
             Some(tmp.path().to_path_buf()),
             tmp.path(),
             Some(agent::AgentKind::Claude),
+            None,
             None,
             None,
             &FakeRunner(0),
@@ -731,6 +752,7 @@ mod tests {
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Anthropic),
             None,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -745,6 +767,7 @@ mod tests {
             tmp.path(),
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Ollama),
+            None,
             None,
             &FakeRunner(0),
         );
@@ -767,6 +790,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &FakeRunner(1),
         );
         assert!(result.is_err());
@@ -782,6 +806,7 @@ mod tests {
             None,
             Some(inference::InferenceKind::VertexAi),
             Some("https://my-vertex-proxy.example.com"),
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -790,6 +815,70 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("--endpoint is not supported for the vertexai inference provider")
+        );
+    }
+
+    #[test]
+    fn run_with_model_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            Some(agent::AgentKind::Claude),
+            Some(inference::InferenceKind::Anthropic),
+            None,
+            Some("claude-opus-4-5"),
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn stage_agent_settings_with_anthropic_and_model_creates_opencode_config() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::Anthropic),
+            None,
+            Some("claude-opus-4-5"),
+            context.path(),
+        )
+        .unwrap();
+        assert!(staged);
+        assert!(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn stage_agent_settings_with_vertexai_and_model_creates_opencode_config() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::VertexAi),
+            None,
+            Some("vertex/claude-opus-4-5"),
+            context.path(),
+        )
+        .unwrap();
+        assert!(staged);
+        assert!(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json")
+                .exists()
         );
     }
 
