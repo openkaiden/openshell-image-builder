@@ -14,6 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod anthropic;
 mod ollama;
 
 use std::collections::HashMap;
@@ -59,6 +60,9 @@ impl Agent for OpencodeAgent {
     ) -> HashMap<String, String> {
         match (inference, base_url) {
             (Some(inference::InferenceKind::Ollama), Some(url)) => ollama::configure(files, url),
+            (Some(inference::InferenceKind::Anthropic), Some(url)) => {
+                anthropic::configure(files, url)
+            }
             _ => files,
         }
     }
@@ -216,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn set_inference_with_anthropic_returns_files_unchanged() {
+    fn set_inference_with_anthropic_without_url_returns_files_unchanged() {
         let mut files = HashMap::new();
         files.insert("existing.json".to_string(), "content".to_string());
         let result = OpencodeAgent.set_inference(
@@ -225,5 +229,26 @@ mod tests {
             None,
         );
         assert_eq!(result, files);
+    }
+
+    #[test]
+    fn set_inference_with_anthropic_and_url_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::Anthropic),
+            Some("https://my-anthropic-proxy.example.com"),
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_anthropic_and_url_embeds_url() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::Anthropic),
+            Some("https://my-anthropic-proxy.example.com"),
+        );
+        let config = result.get(".config/opencode/config.json").unwrap();
+        assert!(config.contains("https://my-anthropic-proxy.example.com"));
     }
 }

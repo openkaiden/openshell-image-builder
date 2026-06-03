@@ -19,9 +19,22 @@ use super::Inference;
 pub struct AnthropicInference;
 
 impl Inference for AnthropicInference {
-    fn policy_yaml(&self, agent_binary: &str) -> String {
-        format!(
-            r#"version: 1
+    fn policy_yaml(&self, agent_binary: &str, base_url: Option<&str>) -> String {
+        if let Some((host, port)) = base_url.and_then(super::parse_host_port) {
+            format!(
+                r#"version: 1
+network_policies:
+  anthropic:
+    name: anthropic
+    endpoints:
+      - {{ host: {host}, port: {port}, protocol: rest, enforcement: enforce, access: full, tls: terminate }}
+    binaries:
+      - {{ path: {agent_binary} }}
+"#
+            )
+        } else {
+            format!(
+                r#"version: 1
 network_policies:
   anthropic:
     name: anthropic
@@ -31,7 +44,8 @@ network_policies:
     binaries:
       - {{ path: {agent_binary} }}
 "#
-        )
+            )
+        }
     }
 }
 
@@ -43,14 +57,14 @@ mod tests {
     fn policy_yaml_contains_anthropic_endpoint() {
         assert!(
             AnthropicInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("api.anthropic.com")
         );
     }
 
     #[test]
     fn policy_yaml_embeds_agent_binary() {
-        let yaml = AnthropicInference.policy_yaml("/sandbox/.local/bin/opencode");
+        let yaml = AnthropicInference.policy_yaml("/sandbox/.local/bin/opencode", None);
         assert!(yaml.contains("/sandbox/.local/bin/opencode"));
     }
 
@@ -58,8 +72,34 @@ mod tests {
     fn policy_yaml_has_anthropic_name() {
         assert!(
             AnthropicInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("name: anthropic")
         );
+    }
+
+    #[test]
+    fn policy_yaml_with_custom_endpoint_uses_proxy_host() {
+        let yaml = AnthropicInference
+            .policy_yaml("/binary", Some("https://my-anthropic-proxy.example.com"));
+        assert!(yaml.contains("my-anthropic-proxy.example.com"));
+        assert!(yaml.contains("443"));
+    }
+
+    #[test]
+    fn policy_yaml_with_custom_endpoint_omits_default_anthropic_host() {
+        let yaml = AnthropicInference
+            .policy_yaml("/binary", Some("https://my-anthropic-proxy.example.com"));
+        assert!(!yaml.contains("api.anthropic.com"));
+        assert!(!yaml.contains("statsig.anthropic.com"));
+    }
+
+    #[test]
+    fn policy_yaml_with_custom_endpoint_custom_port() {
+        let yaml = AnthropicInference.policy_yaml(
+            "/binary",
+            Some("https://my-anthropic-proxy.example.com:8443"),
+        );
+        assert!(yaml.contains("my-anthropic-proxy.example.com"));
+        assert!(yaml.contains("8443"));
     }
 }

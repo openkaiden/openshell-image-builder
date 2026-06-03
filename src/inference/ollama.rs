@@ -21,14 +21,17 @@ pub(crate) const DEFAULT_BASE_URL: &str = "http://localhost:11434/v1";
 pub struct OllamaInference;
 
 impl Inference for OllamaInference {
-    fn policy_yaml(&self, agent_binary: &str) -> String {
+    fn policy_yaml(&self, agent_binary: &str, base_url: Option<&str>) -> String {
+        let (host, port) = base_url
+            .and_then(super::parse_host_port)
+            .unwrap_or_else(|| ("host.openshell.internal".to_string(), 11434));
         format!(
             r#"version: 1
 network_policies:
   ollama:
     name: ollama
     endpoints:
-      - {{ host: host.openshell.internal, port: 11434, protocol: rest, enforcement: enforce, access: full }}
+      - {{ host: {host}, port: {port}, protocol: rest, enforcement: enforce, access: full }}
     binaries:
       - {{ path: {agent_binary} }}
 "#
@@ -44,7 +47,7 @@ mod tests {
     fn policy_yaml_contains_ollama_endpoint() {
         assert!(
             OllamaInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("host.openshell.internal")
         );
     }
@@ -53,14 +56,14 @@ mod tests {
     fn policy_yaml_contains_ollama_port() {
         assert!(
             OllamaInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("11434")
         );
     }
 
     #[test]
     fn policy_yaml_embeds_agent_binary() {
-        let yaml = OllamaInference.policy_yaml("/sandbox/.local/bin/opencode");
+        let yaml = OllamaInference.policy_yaml("/sandbox/.local/bin/opencode", None);
         assert!(yaml.contains("/sandbox/.local/bin/opencode"));
     }
 
@@ -68,8 +71,25 @@ mod tests {
     fn policy_yaml_has_ollama_name() {
         assert!(
             OllamaInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("name: ollama")
         );
+    }
+
+    #[test]
+    fn policy_yaml_with_custom_endpoint_uses_custom_host_and_port() {
+        let yaml =
+            OllamaInference.policy_yaml("/binary", Some("http://host.openshell.internal:9999/v1"));
+        assert!(yaml.contains("host.openshell.internal"));
+        assert!(yaml.contains("9999"));
+        assert!(!yaml.contains("11434"));
+    }
+
+    #[test]
+    fn policy_yaml_with_custom_endpoint_remote_host() {
+        let yaml = OllamaInference
+            .policy_yaml("/binary", Some("http://remote-ollama.example.com:11434/v1"));
+        assert!(yaml.contains("remote-ollama.example.com"));
+        assert!(!yaml.contains("host.openshell.internal"));
     }
 }

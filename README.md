@@ -6,7 +6,7 @@ OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/Op
 
 - **Base image selection** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag.
 - **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints. Settings files can be embedded into the image from a local directory.
-- **Inference configuration** — scoped network access to LLM backends.
+- **Inference configuration** — scoped network access to LLM backends, with optional endpoint override (`--endpoint`) to route traffic through a custom URL or proxy.
 - **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
 - **Sandbox policy** — every image ships `/etc/openshell/policy.yaml`, built from a base policy merged with inference and agent rules.
 
@@ -205,6 +205,38 @@ openshell-image-builder --agent opencode --inference vertexai myimage:latest
 openshell-image-builder --agent opencode --inference ollama myimage:latest
 ```
 
+### Custom endpoint (`--endpoint`)
+
+Use `--endpoint` to override the inference provider's default URL — useful for routing through a proxy, a local instance, or a non-default port.
+
+| Agent      | Inference   | Supported | Effect |
+| ---------- | ----------- | --------- | ------ |
+| `claude`   | `anthropic` | ✅        | Baked into the image as `ENV ANTHROPIC_BASE_URL=<url>` |
+| `claude`   | `vertexai`  | ❌        | Rejected — Vertex AI has a proprietary fixed endpoint |
+| `opencode` | `anthropic` | ✅        | Written to opencode config as `provider.anthropic.options.baseURL` |
+| `opencode` | `vertexai`  | ❌        | Rejected — Vertex AI has a proprietary fixed endpoint |
+| `opencode` | `ollama`    | ✅        | Written to opencode config as `provider.ollama.options.baseURL`; `localhost` in the URL is rewritten to `host.openshell.internal`; defaults to `http://host.openshell.internal:11434/v1` if omitted |
+
+```sh
+# Route Claude Code through a custom Anthropic API proxy
+openshell-image-builder \
+  --agent claude --inference anthropic \
+  --endpoint https://my-anthropic-proxy.example.com \
+  myimage:latest
+
+# Route OpenCode through a custom Anthropic API proxy
+openshell-image-builder \
+  --agent opencode --inference anthropic \
+  --endpoint https://my-anthropic-proxy.example.com \
+  myimage:latest
+
+# Connect OpenCode to Ollama running on a non-default port
+openshell-image-builder \
+  --agent opencode --inference ollama \
+  --endpoint http://localhost:9999/v1 \
+  myimage:latest
+```
+
 ### Automatic configuration — OpenCode + Ollama
 
 When `--agent opencode --inference ollama` is used, the builder automatically writes `/sandbox/.config/opencode/config.json` to configure OpenCode's Ollama provider:
@@ -345,6 +377,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--config <CONFIG>`        | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
 | `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`) |
+| `--endpoint <URL>`         | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
 
 ## Examples

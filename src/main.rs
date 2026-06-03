@@ -57,6 +57,8 @@ struct Cli {
     agent: Option<agent::AgentKind>,
     #[arg(long, value_enum, help = "Inference server the agent will connect to")]
     inference: Option<inference::InferenceKind>,
+    #[arg(long, help = "Override the inference provider's default endpoint URL")]
+    endpoint: Option<String>,
 }
 
 fn main() {
@@ -75,6 +77,7 @@ fn main() {
         Path::new("."),
         cli.agent,
         cli.inference,
+        cli.endpoint.as_deref(),
         &build::PodmanRunner,
     ) {
         eprintln!("Error: {e}");
@@ -88,8 +91,12 @@ fn run(
     workspace_base: &Path,
     agent_kind: Option<agent::AgentKind>,
     inference_kind: Option<inference::InferenceKind>,
+    endpoint: Option<&str>,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
+        return Err("--endpoint is not supported for the vertexai inference provider".into());
+    }
     let config = config::load(config_path.clone())?;
     let workspace = workspace::load_from(workspace_base)?;
     let agent = agent_kind.map(agent::from_kind);
@@ -113,14 +120,24 @@ fn run(
             a,
             settings_dir.as_deref(),
             inference_kind.as_ref(),
-            None, // future: cli.endpoint.as_deref()
+            endpoint,
             context_dir.path(),
         )?
     } else {
         false
     };
+    let agent_env_vars = agent
+        .as_deref()
+        .map(|a| a.env_vars(inference_kind.as_ref(), endpoint))
+        .unwrap_or_default();
+    let base_url = resolve_base_url(inference_kind.as_ref(), endpoint);
     let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())?;
-    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref())?;
+    let policy_yaml = build_policy(
+        BASE_POLICY_YAML,
+        agent.as_deref(),
+        inference.as_deref(),
+        base_url.as_deref(),
+    )?;
     std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
     let output = containerfile::generate(
         &config,
@@ -128,6 +145,7 @@ fn run(
         &features,
         has_agent_settings,
         &skill_names,
+        &agent_env_vars,
     )?;
     build::build(&output, tag, runner, context_dir.path())?;
     Ok(())
@@ -209,6 +227,7 @@ fn resolve_base_url(
             let raw = endpoint.unwrap_or(inference::OLLAMA_DEFAULT_BASE_URL);
             Some(host::rewrite_localhost(raw))
         }
+        Some(inference::InferenceKind::Anthropic) => endpoint.map(str::to_string),
         _ => None,
     }
 }
@@ -253,10 +272,11 @@ fn build_policy(
     base_yaml: &str,
     agent: Option<&dyn agent::Agent>,
     inference: Option<&dyn inference::Inference>,
+    base_url: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut sandbox_policy = policy::parse_sandbox_policy(base_yaml)?;
     if let (Some(inference), Some(agent)) = (inference, agent) {
-        let inference_yaml = inference.policy_yaml(agent.binary_path());
+        let inference_yaml = inference.policy_yaml(agent.binary_path(), base_url);
         let inference_policy = policy::parse_sandbox_policy(&inference_yaml)?;
         sandbox_policy
             .network_policies
@@ -298,19 +318,19 @@ mod tests {
 
     #[test]
     fn build_policy_without_agent_has_no_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, None, None).unwrap();
+        let yaml = build_policy(BASE_POLICY_YAML, None, None, None).unwrap();
         assert!(!yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_with_claude_agent_includes_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None).unwrap();
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None, None).unwrap();
         assert!(yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_without_inference_has_no_anthropic_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None).unwrap();
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None, None).unwrap();
         assert!(!yaml.contains("api.anthropic.com"));
     }
 
@@ -320,6 +340,7 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("api.anthropic.com"));
@@ -331,6 +352,7 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("/sandbox/.local/bin/claude"));
@@ -342,6 +364,7 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::VertexAiInference),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("aiplatform.googleapis.com"));
@@ -353,9 +376,37 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::OllamaInference),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("host.openshell.internal"));
+    }
+
+    #[test]
+    fn build_policy_with_anthropic_and_custom_endpoint_uses_proxy_host() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::AnthropicInference),
+            Some("https://my-anthropic-proxy.example.com"),
+        )
+        .unwrap();
+        assert!(yaml.contains("my-anthropic-proxy.example.com"));
+        assert!(!yaml.contains("api.anthropic.com"));
+    }
+
+    #[test]
+    fn build_policy_with_ollama_and_custom_endpoint_uses_custom_host_and_port() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::OllamaInference),
+            Some("http://host.openshell.internal:9999/v1"),
+        )
+        .unwrap();
+        assert!(yaml.contains("host.openshell.internal"));
+        assert!(yaml.contains("9999"));
+        assert!(!yaml.contains("11434"));
     }
 
     // copy_dir
@@ -649,6 +700,7 @@ mod tests {
             tmp.path(),
             None,
             None,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -662,6 +714,7 @@ mod tests {
             Some(tmp.path().to_path_buf()),
             tmp.path(),
             Some(agent::AgentKind::Claude),
+            None,
             None,
             &FakeRunner(0),
         );
@@ -677,6 +730,7 @@ mod tests {
             tmp.path(),
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Anthropic),
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -691,6 +745,7 @@ mod tests {
             tmp.path(),
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Ollama),
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -711,9 +766,31 @@ mod tests {
             tmp.path(),
             None,
             None,
+            None,
             &FakeRunner(1),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_with_endpoint_and_vertexai_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            None,
+            Some(inference::InferenceKind::VertexAi),
+            Some("https://my-vertex-proxy.example.com"),
+            &FakeRunner(0),
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("--endpoint is not supported for the vertexai inference provider")
+        );
     }
 
     // resolve_base_url
@@ -750,5 +827,25 @@ mod tests {
         assert!(resolve_base_url(Some(&inference::InferenceKind::Anthropic), None).is_none());
         assert!(resolve_base_url(Some(&inference::InferenceKind::VertexAi), None).is_none());
         assert!(resolve_base_url(None, None).is_none());
+    }
+
+    #[test]
+    fn resolve_base_url_anthropic_with_endpoint_returns_endpoint() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::Anthropic),
+            Some("https://my-proxy.example.com"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://my-proxy.example.com");
+    }
+
+    #[test]
+    fn resolve_base_url_anthropic_endpoint_not_rewritten() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::Anthropic),
+            Some("http://localhost:8080"),
+        )
+        .unwrap();
+        assert_eq!(url, "http://localhost:8080");
     }
 }

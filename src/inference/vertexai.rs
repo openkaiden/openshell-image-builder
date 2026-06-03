@@ -19,7 +19,7 @@ use super::Inference;
 pub struct VertexAiInference;
 
 impl Inference for VertexAiInference {
-    fn policy_yaml(&self, agent_binary: &str) -> String {
+    fn policy_yaml(&self, agent_binary: &str, _base_url: Option<&str>) -> String {
         format!(
             r#"version: 1
 network_policies:
@@ -44,7 +44,7 @@ mod tests {
     fn policy_yaml_contains_oauth2_endpoint() {
         assert!(
             VertexAiInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("oauth2.googleapis.com")
         );
     }
@@ -53,7 +53,7 @@ mod tests {
     fn policy_yaml_contains_aiplatform_endpoint() {
         assert!(
             VertexAiInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("aiplatform.googleapis.com")
         );
     }
@@ -62,14 +62,14 @@ mod tests {
     fn policy_yaml_contains_wildcard_aiplatform_endpoint() {
         assert!(
             VertexAiInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("*-aiplatform.googleapis.com")
         );
     }
 
     #[test]
     fn policy_yaml_embeds_agent_binary() {
-        let yaml = VertexAiInference.policy_yaml("/sandbox/.local/bin/opencode");
+        let yaml = VertexAiInference.policy_yaml("/sandbox/.local/bin/opencode", None);
         assert!(yaml.contains("/sandbox/.local/bin/opencode"));
     }
 
@@ -77,7 +77,7 @@ mod tests {
     fn policy_yaml_has_vertexai_name() {
         assert!(
             VertexAiInference
-                .policy_yaml("/sandbox/.local/bin/claude")
+                .policy_yaml("/sandbox/.local/bin/claude", None)
                 .contains("name: vertexai")
         );
     }

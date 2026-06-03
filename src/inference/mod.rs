@@ -31,7 +31,19 @@ use clap::ValueEnum;
 
 pub trait Inference {
     /// Returns a network policy YAML fragment scoped to the given agent binary.
-    fn policy_yaml(&self, agent_binary: &str) -> String;
+    /// `base_url` replaces the provider's default endpoint in the policy when `Some`.
+    fn policy_yaml(&self, agent_binary: &str, base_url: Option<&str>) -> String;
+}
+
+/// Parses `host` and `port` from a URL string using the `url` crate.
+/// Returns `None` if the URL cannot be parsed or has no host.
+fn parse_host_port(url: &str) -> Option<(String, u16)> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_string();
+    let port = parsed
+        .port()
+        .unwrap_or_else(|| if parsed.scheme() == "https" { 443 } else { 80 });
+    Some((host, port))
 }
 
 #[derive(Clone, PartialEq, ValueEnum)]
