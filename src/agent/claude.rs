@@ -66,6 +66,18 @@ impl Agent for ClaudeAgent {
         ]
     }
 
+    fn env_vars(
+        &self,
+        inference: Option<&inference::InferenceKind>,
+        endpoint: Option<&str>,
+    ) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+        if let (Some(inference::InferenceKind::Anthropic), Some(url)) = (inference, endpoint) {
+            vars.insert("ANTHROPIC_BASE_URL".to_string(), url.to_string());
+        }
+        vars
+    }
+
     fn skills_dir(&self) -> &str {
         "/sandbox/.claude/skills"
     }
@@ -201,6 +213,30 @@ mod tests {
                 .supported_inference()
                 .contains(&inference::InferenceKind::Ollama)
         );
+    }
+
+    #[test]
+    fn env_vars_with_anthropic_and_endpoint_sets_anthropic_base_url() {
+        let vars = ClaudeAgent.env_vars(
+            Some(&inference::InferenceKind::Anthropic),
+            Some("https://my-proxy.example.com"),
+        );
+        assert_eq!(
+            vars.get("ANTHROPIC_BASE_URL").map(String::as_str),
+            Some("https://my-proxy.example.com")
+        );
+    }
+
+    #[test]
+    fn env_vars_with_anthropic_and_no_endpoint_returns_empty() {
+        let vars = ClaudeAgent.env_vars(Some(&inference::InferenceKind::Anthropic), None);
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn env_vars_with_no_inference_returns_empty() {
+        let vars = ClaudeAgent.env_vars(None, Some("https://my-proxy.example.com"));
+        assert!(vars.is_empty());
     }
 
     #[test]

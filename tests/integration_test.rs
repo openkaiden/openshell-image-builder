@@ -1621,6 +1621,235 @@ mod opencode_ollama {
 }
 
 // ---------------------------------------------------------------------------
+// --endpoint integration tests
+// ---------------------------------------------------------------------------
+
+const ANTHROPIC_PROXY_URL: &str = "https://my-anthropic-proxy.example.com";
+const OLLAMA_CUSTOM_ENDPOINT: &str = "http://localhost:9999/v1";
+
+static UBUNTU_CLAUDE_ANTHROPIC_ENDPOINT_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_ANTHROPIC_ENDPOINT_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_OLLAMA_CUSTOM_ENDPOINT_IMAGE: OnceLock<String> = OnceLock::new();
+
+fn ubuntu_claude_anthropic_endpoint_image() -> &'static str {
+    UBUNTU_CLAUDE_ANTHROPIC_ENDPOINT_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-claude-anthropic-endpoint:integration",
+            &[
+                "--agent",
+                "claude",
+                "--inference",
+                "anthropic",
+                "--endpoint",
+                ANTHROPIC_PROXY_URL,
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_anthropic_endpoint_image() -> &'static str {
+    UBUNTU_OPENCODE_ANTHROPIC_ENDPOINT_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-anthropic-endpoint:integration",
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "anthropic",
+                "--endpoint",
+                ANTHROPIC_PROXY_URL,
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_ollama_custom_endpoint_image() -> &'static str {
+    UBUNTU_OPENCODE_OLLAMA_CUSTOM_ENDPOINT_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-ollama-custom-endpoint:integration",
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+                "--endpoint",
+                OLLAMA_CUSTOM_ENDPOINT,
+            ],
+        )
+    })
+}
+
+// claude + anthropic + custom endpoint: policy replaced, ANTHROPIC_BASE_URL baked in
+mod endpoint_claude_anthropic {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn policy_uses_proxy_host_instead_of_api_anthropic() {
+        let out = run_in_image(
+            ubuntu_claude_anthropic_endpoint_image(),
+            "grep -q 'my-anthropic-proxy.example.com' /etc/openshell/policy.yaml",
+        );
+        assert!(out.status.success(), "proxy host not found in policy.yaml");
+    }
+
+    #[test]
+    #[ignore]
+    fn policy_does_not_contain_default_anthropic_host() {
+        let out = run_in_image(
+            ubuntu_claude_anthropic_endpoint_image(),
+            "grep -q 'api.anthropic.com' /etc/openshell/policy.yaml",
+        );
+        assert!(
+            !out.status.success(),
+            "api.anthropic.com must not appear in policy.yaml when --endpoint is used"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn anthropic_base_url_env_set_to_proxy() {
+        let cmd = format!("test \"$ANTHROPIC_BASE_URL\" = \"{}\"", ANTHROPIC_PROXY_URL);
+        let out = run_in_image(ubuntu_claude_anthropic_endpoint_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "ANTHROPIC_BASE_URL is not set to the proxy URL in the image"
+        );
+    }
+}
+
+// opencode + anthropic + custom endpoint: policy replaced, config.json updated
+mod endpoint_opencode_anthropic {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn policy_uses_proxy_host_instead_of_api_anthropic() {
+        let out = run_in_image(
+            ubuntu_opencode_anthropic_endpoint_image(),
+            "grep -q 'my-anthropic-proxy.example.com' /etc/openshell/policy.yaml",
+        );
+        assert!(out.status.success(), "proxy host not found in policy.yaml");
+    }
+
+    #[test]
+    #[ignore]
+    fn policy_does_not_contain_default_anthropic_host() {
+        let out = run_in_image(
+            ubuntu_opencode_anthropic_endpoint_image(),
+            "grep -q 'api.anthropic.com' /etc/openshell/policy.yaml",
+        );
+        assert!(
+            !out.status.success(),
+            "api.anthropic.com must not appear in policy.yaml when --endpoint is used"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_contains_proxy_url() {
+        let cmd = format!(
+            "grep -q '{}' /sandbox/.config/opencode/config.json",
+            ANTHROPIC_PROXY_URL
+        );
+        let out = run_in_image(ubuntu_opencode_anthropic_endpoint_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "proxy URL not found in opencode config.json"
+        );
+    }
+}
+
+// opencode + ollama + custom endpoint: policy replaced, config.json updated
+mod endpoint_opencode_ollama_custom {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn policy_uses_custom_port_instead_of_default() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_custom_endpoint_image(),
+            "grep -q '9999' /etc/openshell/policy.yaml",
+        );
+        assert!(
+            out.status.success(),
+            "custom port 9999 not found in policy.yaml"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn policy_does_not_use_default_ollama_port() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_custom_endpoint_image(),
+            "grep -q '11434' /etc/openshell/policy.yaml",
+        );
+        assert!(
+            !out.status.success(),
+            "default port 11434 must not appear in policy.yaml when --endpoint overrides it"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_contains_rewritten_endpoint_url() {
+        // localhost in the CLI arg is rewritten to host.openshell.internal
+        let out = run_in_image(
+            ubuntu_opencode_ollama_custom_endpoint_image(),
+            "grep -q 'host.openshell.internal:9999' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "rewritten endpoint URL not found in opencode config.json"
+        );
+    }
+}
+
+// vertexai + endpoint rejection: does not require podman, never #[ignore]
+mod endpoint_rejection {
+    use super::*;
+
+    #[test]
+    fn vertexai_with_endpoint_exits_nonzero() {
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let output = Command::new(binary)
+            .args([
+                "--inference",
+                "vertexai",
+                "--endpoint",
+                "https://my-vertex-proxy.example.com",
+                "should-not-be-built:test",
+            ])
+            .output()
+            .expect("binary should run");
+        assert!(
+            !output.status.success(),
+            "--inference vertexai --endpoint must exit non-zero"
+        );
+    }
+
+    #[test]
+    fn vertexai_with_endpoint_error_mentions_vertexai() {
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let output = Command::new(binary)
+            .args([
+                "--inference",
+                "vertexai",
+                "--endpoint",
+                "https://my-vertex-proxy.example.com",
+                "should-not-be-built:test",
+            ])
+            .output()
+            .expect("binary should run");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("vertexai"),
+            "error message should mention vertexai, got: {stderr}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -1663,6 +1892,9 @@ fn cleanup_images() {
         "openshell-test-fedora-opencode-ollama:integration",
         "openshell-test-ubi-opencode-ollama:integration",
         "openshell-test-hummingbird-opencode-ollama:integration",
+        "openshell-test-ubuntu-claude-anthropic-endpoint:integration",
+        "openshell-test-ubuntu-opencode-anthropic-endpoint:integration",
+        "openshell-test-ubuntu-opencode-ollama-custom-endpoint:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])

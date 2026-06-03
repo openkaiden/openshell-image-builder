@@ -14,6 +14,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use crate::agent::Agent;
 use crate::config::Config;
 use crate::feature::StagedFeature;
@@ -41,6 +43,7 @@ pub fn generate(
     features: &[StagedFeature],
     with_agent_settings: bool,
     skill_names: &[String],
+    env_vars: &HashMap<String, String>,
 ) -> Result<String, ContainerfileError> {
     let tag = &config.base_image.tag;
     let system_stage = match config.base_image.image.as_str() {
@@ -92,7 +95,7 @@ pub fn generate(
     };
     Ok(format!(
         "{system_stage}\n{}",
-        final_stage(agent, features, with_agent_settings, skill_names)
+        final_stage(agent, features, with_agent_settings, skill_names, env_vars)
     ))
 }
 
@@ -232,6 +235,7 @@ fn final_stage(
     features: &[StagedFeature],
     with_agent_settings: bool,
     skill_names: &[String],
+    env_vars: &HashMap<String, String>,
 ) -> String {
     let agent_section = agent
         .map(|a| format!("{}\n\n", a.install()))
@@ -243,6 +247,18 @@ fn final_stage(
     };
     let skills_section = skills_section(agent, skill_names);
     let features_section = features_section(features);
+    let env_vars_section = if env_vars.is_empty() {
+        String::new()
+    } else {
+        let mut pairs: Vec<(&String, &String)> = env_vars.iter().collect();
+        pairs.sort_by_key(|(k, _)| k.as_str());
+        let mut out = pairs
+            .iter()
+            .map(|(k, v)| format!("ENV {}=\"{}\"\n", k, v.replace('"', "\\\"")))
+            .collect::<String>();
+        out.push('\n');
+        out
+    };
     format!(
         r#"# Final base image
 FROM system AS final
@@ -258,7 +274,7 @@ RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
 ENV HOME=/sandbox
 USER sandbox
 
-{agent_settings_section}{skills_section}{agent_section}ENTRYPOINT ["/bin/bash"]
+{env_vars_section}{agent_settings_section}{skills_section}{agent_section}ENTRYPOINT ["/bin/bash"]
 "#
     )
 }
@@ -268,6 +284,23 @@ mod tests {
     use super::*;
     use crate::agent::Agent;
     use crate::config::{BaseImageConfig, Config};
+
+    fn build_cf(
+        config: &Config,
+        agent: Option<&dyn Agent>,
+        features: &[StagedFeature],
+        with_agent_settings: bool,
+        skill_names: &[String],
+    ) -> Result<String, ContainerfileError> {
+        generate(
+            config,
+            agent,
+            features,
+            with_agent_settings,
+            skill_names,
+            &HashMap::new(),
+        )
+    }
 
     fn ubuntu_config(tag: &str) -> Config {
         Config {
@@ -341,26 +374,26 @@ mod tests {
     #[test]
     fn ubuntu_generates_successfully() {
         let config = ubuntu_config("noble-20251013");
-        assert!(generate(&config, None, &[], false, &[]).is_ok());
+        assert!(build_cf(&config, None, &[], false, &[]).is_ok());
     }
 
     #[test]
     fn ubuntu_containerfile_contains_tag() {
         let config = ubuntu_config("noble-20251013");
-        let content = generate(&config, None, &[], false, &[]).unwrap();
+        let content = build_cf(&config, None, &[], false, &[]).unwrap();
         assert!(content.contains("FROM docker.io/library/ubuntu:noble-20251013 AS system"));
     }
 
     #[test]
     fn ubuntu_containerfile_tag_is_substituted() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
         assert!(content.contains("FROM docker.io/library/ubuntu:24.04 AS system"));
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn ubuntu_with_agent_includes_install() {
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("noble-20251013"),
             Some(&MockAgent),
             &[],
@@ -373,7 +406,7 @@ mod tests {
 
     #[test]
     fn ubuntu_agent_install_runs_as_sandbox_user() {
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("noble-20251013"),
             Some(&MockAgent),
             &[],
@@ -391,36 +424,36 @@ mod tests {
 
     #[test]
     fn ubuntu_without_agent_omits_install() {
-        let content = generate(&ubuntu_config("noble-20251013"), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("noble-20251013"), None, &[], false, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn fedora_generates_successfully() {
-        assert!(generate(&fedora_config(), None, &[], false, &[]).is_ok());
+        assert!(build_cf(&fedora_config(), None, &[], false, &[]).is_ok());
     }
 
     #[test]
     fn fedora_containerfile_contains_tag() {
-        let content = generate(&fedora_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("FROM registry.fedoraproject.org/fedora:latest AS system"));
     }
 
     #[test]
     fn fedora_containerfile_tag_is_substituted() {
-        let content = generate(&fedora_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn fedora_with_agent_includes_install() {
-        let content = generate(&fedora_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         assert!(content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn fedora_agent_install_runs_as_sandbox_user() {
-        let content = generate(&fedora_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let install_pos = content.find("RUN echo mock-agent").unwrap();
         assert!(
@@ -431,36 +464,36 @@ mod tests {
 
     #[test]
     fn fedora_without_agent_omits_install() {
-        let content = generate(&fedora_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn ubi_generates_successfully() {
-        assert!(generate(&ubi_config(), None, &[], false, &[]).is_ok());
+        assert!(build_cf(&ubi_config(), None, &[], false, &[]).is_ok());
     }
 
     #[test]
     fn ubi_containerfile_contains_tag() {
-        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("FROM registry.access.redhat.com/ubi10/ubi:latest AS system"));
     }
 
     #[test]
     fn ubi_containerfile_tag_is_substituted() {
-        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn ubi_with_agent_includes_install() {
-        let content = generate(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         assert!(content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn ubi_agent_install_runs_as_sandbox_user() {
-        let content = generate(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let install_pos = content.find("RUN echo mock-agent").unwrap();
         assert!(
@@ -471,24 +504,24 @@ mod tests {
 
     #[test]
     fn ubi_without_agent_omits_install() {
-        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn ubi_copies_policy_yaml() {
-        let content = generate(&ubi_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubi_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
     #[test]
     fn hummingbird_generates_successfully() {
-        assert!(generate(&hummingbird_config(), None, &[], false, &[]).is_ok());
+        assert!(build_cf(&hummingbird_config(), None, &[], false, &[]).is_ok());
     }
 
     #[test]
     fn hummingbird_containerfile_contains_tag() {
-        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(
             content.contains(
                 "FROM registry.access.redhat.com/hi/core-runtime:latest-builder AS system"
@@ -498,19 +531,19 @@ mod tests {
 
     #[test]
     fn hummingbird_containerfile_tag_is_substituted() {
-        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
     fn hummingbird_with_agent_includes_install() {
-        let content = generate(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         assert!(content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn hummingbird_agent_install_runs_as_sandbox_user() {
-        let content = generate(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), Some(&MockAgent), &[], false, &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let install_pos = content.find("RUN echo mock-agent").unwrap();
         assert!(
@@ -521,23 +554,23 @@ mod tests {
 
     #[test]
     fn hummingbird_without_agent_omits_install() {
-        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn hummingbird_copies_policy_yaml() {
-        let content = generate(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
     #[test]
     fn home_env_set_to_sandbox() {
         for content in [
-            generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap(),
-            generate(&fedora_config(), None, &[], false, &[]).unwrap(),
-            generate(&ubi_config(), None, &[], false, &[]).unwrap(),
-            generate(&hummingbird_config(), None, &[], false, &[]).unwrap(),
+            build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap(),
+            build_cf(&fedora_config(), None, &[], false, &[]).unwrap(),
+            build_cf(&ubi_config(), None, &[], false, &[]).unwrap(),
+            build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap(),
         ] {
             assert!(content.contains("ENV HOME=/sandbox"));
         }
@@ -560,7 +593,7 @@ mod tests {
                 tag: "latest".to_string(),
             },
         };
-        let err = generate(&config, None, &[], false, &[]).unwrap_err();
+        let err = build_cf(&config, None, &[], false, &[]).unwrap_err();
         assert_eq!(
             err,
             ContainerfileError::NotSupported {
@@ -572,7 +605,7 @@ mod tests {
     #[test]
     fn feature_section_appears_before_profile_setup() {
         let feature = mock_feature("./tools/my-feature", "feature-0");
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         let feature_pos = content.find("# Feature:").unwrap();
         let profile_pos = content.find("printf 'export PS1").unwrap();
         assert!(
@@ -584,7 +617,7 @@ mod tests {
     #[test]
     fn feature_copy_instruction_present() {
         let feature = mock_feature("./tools/my-feature", "feature-0");
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         assert!(content.contains("COPY features/feature-0/"));
         assert!(content.contains("/tmp/feature-install/feature-0/install.sh"));
     }
@@ -592,7 +625,7 @@ mod tests {
     #[test]
     fn feature_remote_user_env_vars_set() {
         let feature = mock_feature("./tools/my-feature", "feature-0");
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         assert!(content.contains("_REMOTE_USER=\"sandbox\""));
         assert!(content.contains("_REMOTE_USER_HOME=\"/sandbox\""));
     }
@@ -603,7 +636,7 @@ mod tests {
         feature
             .merged_options
             .insert("VERSION".to_string(), "1.0".to_string());
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         assert!(content.contains("VERSION=\"1.0\""));
     }
 
@@ -613,14 +646,14 @@ mod tests {
         feature
             .container_env
             .insert("CARGO_HOME".to_string(), "/home/sandbox/.cargo".to_string());
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         assert!(content.contains("ENV CARGO_HOME=\"/home/sandbox/.cargo\""));
     }
 
     #[test]
     fn feature_block_before_user_sandbox() {
         let feature = mock_feature("./tools/my-feature", "feature-0");
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         let feature_pos = content.find("# Feature:").unwrap();
         let user_sandbox_pos = content.find("USER sandbox").unwrap();
         assert!(
@@ -632,13 +665,13 @@ mod tests {
     #[test]
     fn feature_install_dir_cleaned_up() {
         let feature = mock_feature("./tools/my-feature", "feature-0");
-        let content = generate(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[feature], false, &[]).unwrap();
         assert!(content.contains("RUN rm -rf /tmp/feature-install\n"));
     }
 
     #[test]
     fn no_features_produces_same_output_as_before() {
-        let with_empty = generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        let with_empty = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
         assert!(!with_empty.contains("# Feature:"));
         assert!(!with_empty.contains("_REMOTE_USER"));
         assert!(!with_empty.contains("rm -rf /tmp/feature-install"));
@@ -646,19 +679,19 @@ mod tests {
 
     #[test]
     fn ubuntu_copies_policy_yaml() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
     #[test]
     fn fedora_copies_policy_yaml() {
-        let content = generate(&fedora_config(), None, &[], false, &[]).unwrap();
+        let content = build_cf(&fedora_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
     }
 
     #[test]
     fn policy_copy_appears_before_user_sandbox() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
         let copy_pos = content
             .find("COPY policy.yaml /etc/openshell/policy.yaml")
             .unwrap();
@@ -671,31 +704,31 @@ mod tests {
 
     #[test]
     fn ubuntu_with_agent_settings_includes_copy() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
         assert!(content.contains("COPY --chown=sandbox:sandbox agent-settings/ /sandbox/"));
     }
 
     #[test]
     fn ubuntu_without_agent_settings_omits_copy() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
         assert!(!content.contains("agent-settings/"));
     }
 
     #[test]
     fn fedora_with_agent_settings_includes_copy() {
-        let content = generate(&fedora_config(), None, &[], true, &[]).unwrap();
+        let content = build_cf(&fedora_config(), None, &[], true, &[]).unwrap();
         assert!(content.contains("COPY --chown=sandbox:sandbox agent-settings/ /sandbox/"));
     }
 
     #[test]
     fn agent_settings_copy_uses_chown_sandbox() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
         assert!(content.contains("--chown=sandbox:sandbox"));
     }
 
     #[test]
     fn agent_settings_copy_appears_after_user_sandbox() {
-        let content = generate(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], true, &[]).unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let copy_pos = content
             .find("COPY --chown=sandbox:sandbox agent-settings/")
@@ -708,7 +741,7 @@ mod tests {
 
     #[test]
     fn agent_settings_copy_appears_before_agent_install() {
-        let content = generate(&ubuntu_config("24.04"), Some(&MockAgent), &[], true, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), Some(&MockAgent), &[], true, &[]).unwrap();
         let copy_pos = content
             .find("COPY --chown=sandbox:sandbox agent-settings/")
             .unwrap();
@@ -722,7 +755,7 @@ mod tests {
     #[test]
     fn skills_copy_present_for_agent_with_skills_dir() {
         let skills = vec!["my-skill".to_string()];
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("24.04"),
             Some(&MockAgent),
             &[],
@@ -736,7 +769,7 @@ mod tests {
     #[test]
     fn skills_copy_uses_agent_skills_dir() {
         let skills = vec!["my-skill".to_string()];
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("24.04"),
             Some(&MockAgent),
             &[],
@@ -749,21 +782,21 @@ mod tests {
 
     #[test]
     fn skills_copy_omitted_when_no_skills() {
-        let content = generate(&ubuntu_config("24.04"), Some(&MockAgent), &[], false, &[]).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), Some(&MockAgent), &[], false, &[]).unwrap();
         assert!(!content.contains("skills/"));
     }
 
     #[test]
     fn skills_copy_omitted_when_no_agent() {
         let skills = vec!["my-skill".to_string()];
-        let content = generate(&ubuntu_config("24.04"), None, &[], false, &skills).unwrap();
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &skills).unwrap();
         assert!(!content.contains("skills/"));
     }
 
     #[test]
     fn skills_copy_appears_after_user_sandbox() {
         let skills = vec!["my-skill".to_string()];
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("24.04"),
             Some(&MockAgent),
             &[],
@@ -784,7 +817,7 @@ mod tests {
     #[test]
     fn skills_copy_appears_before_agent_install() {
         let skills = vec!["my-skill".to_string()];
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("24.04"),
             Some(&MockAgent),
             &[],
@@ -805,7 +838,7 @@ mod tests {
     #[test]
     fn multiple_skills_each_get_copy_instruction() {
         let skills = vec!["skill-a".to_string(), "skill-b".to_string()];
-        let content = generate(
+        let content = build_cf(
             &ubuntu_config("24.04"),
             Some(&MockAgent),
             &[],
@@ -815,5 +848,51 @@ mod tests {
         .unwrap();
         assert!(content.contains("COPY --chown=sandbox:sandbox skills/skill-a/"));
         assert!(content.contains("COPY --chown=sandbox:sandbox skills/skill-b/"));
+    }
+
+    // env_vars
+
+    #[test]
+    fn env_vars_emitted_as_env_instructions() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://proxy.example.com".to_string(),
+        );
+        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars).unwrap();
+        assert!(content.contains("ENV ANTHROPIC_BASE_URL=\"https://proxy.example.com\""));
+    }
+
+    #[test]
+    fn env_vars_appear_after_user_sandbox() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://proxy.example.com".to_string(),
+        );
+        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars).unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        let env_pos = content.find("ENV ANTHROPIC_BASE_URL=").unwrap();
+        assert!(
+            env_pos > user_pos,
+            "agent env vars must appear after USER sandbox"
+        );
+    }
+
+    #[test]
+    fn empty_env_vars_produces_no_extra_env_instruction() {
+        let content = build_cf(&ubuntu_config("24.04"), None, &[], false, &[]).unwrap();
+        assert!(!content.contains("ENV ANTHROPIC_BASE_URL="));
+    }
+
+    #[test]
+    fn multiple_env_vars_are_sorted_alphabetically() {
+        let mut vars = HashMap::new();
+        vars.insert("Z_VAR".to_string(), "z".to_string());
+        vars.insert("A_VAR".to_string(), "a".to_string());
+        let content = generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars).unwrap();
+        let a_pos = content.find("ENV A_VAR=").unwrap();
+        let z_pos = content.find("ENV Z_VAR=").unwrap();
+        assert!(a_pos < z_pos, "env vars must be sorted alphabetically");
     }
 }
