@@ -24,6 +24,7 @@ Supported inference providers:
 
 - [Anthropic](https://www.anthropic.com) (`--inference anthropic`)
 - [Vertex AI](https://cloud.google.com/vertex-ai) (`--inference vertexai`)
+- [Ollama](https://ollama.com) (`--inference ollama`) — local models running on the host machine (OpenCode only)
 
 ## Quick start
 
@@ -190,17 +191,43 @@ If you provide your own `.claude.json` in the agent settings directory, the buil
 
 Pass `--inference` to allow the agent to reach its LLM backend. This is separate from `--agent` because the same inference provider can serve multiple agents.
 
-| Inference | Value       | Description                         |
-| --------- | ----------- | ----------------------------------- |
-| Anthropic | `anthropic` | Anthropic API (`api.anthropic.com`) |
-| Vertex AI | `vertexai`  | Google Vertex AI (`oauth2.googleapis.com`, `aiplatform.googleapis.com`, `*-aiplatform.googleapis.com`) |
+| Inference | Value       | Agents                  | Description                         |
+| --------- | ----------- | ----------------------- | ----------------------------------- |
+| Anthropic | `anthropic` | `claude`, `opencode`    | Anthropic API (`api.anthropic.com`) |
+| Vertex AI | `vertexai`  | `claude`, `opencode`    | Google Vertex AI (`oauth2.googleapis.com`, `aiplatform.googleapis.com`, `*-aiplatform.googleapis.com`) |
+| Ollama    | `ollama`    | `opencode`              | Local models on the host machine, reached via `host.openshell.internal:11434` |
 
 ```sh
 openshell-image-builder --agent claude --inference anthropic myimage:latest
 openshell-image-builder --agent opencode --inference anthropic myimage:latest
 openshell-image-builder --agent claude --inference vertexai myimage:latest
 openshell-image-builder --agent opencode --inference vertexai myimage:latest
+openshell-image-builder --agent opencode --inference ollama myimage:latest
 ```
+
+### Automatic configuration — OpenCode + Ollama
+
+When `--agent opencode --inference ollama` is used, the builder automatically writes `/sandbox/.config/opencode/config.json` to configure OpenCode's Ollama provider:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://host.openshell.internal:11434/v1"
+      },
+      "models": {
+        "lfm2.5":          { "tools": true },
+        "qwen3-coder:30b": { "tools": true }
+      }
+    }
+  }
+}
+```
+
+`host.openshell.internal` is the hostname used inside the sandbox to reach the container host, where Ollama is expected to be running on its default port (`11434`). Ollama must be running on the host before the sandbox is started.
 
 ## Sandbox policy
 
@@ -212,7 +239,7 @@ Every image built by this tool includes `/etc/openshell/policy.yaml`. This file 
 The policy is built in three layers, merged in order:
 
 1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
-2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard).
+2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard); `--inference ollama` adds `host.openshell.internal:11434` for local model access.
 3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
 
 ## Dev Container Features
@@ -317,7 +344,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
 | `--config <CONFIG>`        | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
-| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`) |
+| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
 
 ## Examples
@@ -395,6 +422,26 @@ $ openshell sandbox upload \
 $ openshell sandbox connect claude_vertexai_sandbox
 
 sandbox:~$ claude
+```
+
+### OpenCode agent + Ollama (local models)
+
+Ollama must be running on the host before starting the sandbox.
+
+```
+$ openshell-image-builder \
+  --agent opencode \
+  --inference ollama \
+  sandbox_image:opencode_ollama
+
+$ openshell sandbox create \
+  --from sandbox_image:opencode_ollama \
+  --upload . \
+  --name opencode_ollama_sandbox \
+  --no-auto-providers \
+  -- opencode
+
+# select a model with /models
 ```
 
 ### OpenCode agent + Vertex AI models provider

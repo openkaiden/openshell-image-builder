@@ -14,7 +14,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod ollama;
+
+use std::collections::HashMap;
+
 use super::Agent;
+use crate::inference;
 
 pub struct OpencodeAgent;
 
@@ -36,6 +41,26 @@ impl Agent for OpencodeAgent {
 
     fn binary_path(&self) -> &str {
         "/sandbox/.local/bin/opencode"
+    }
+
+    fn supported_inference(&self) -> Vec<inference::InferenceKind> {
+        vec![
+            inference::InferenceKind::Anthropic,
+            inference::InferenceKind::Ollama,
+            inference::InferenceKind::VertexAi,
+        ]
+    }
+
+    fn set_inference(
+        &self,
+        files: HashMap<String, String>,
+        inference: Option<&inference::InferenceKind>,
+        base_url: Option<&str>,
+    ) -> HashMap<String, String> {
+        match (inference, base_url) {
+            (Some(inference::InferenceKind::Ollama), Some(url)) => ollama::configure(files, url),
+            _ => files,
+        }
     }
 
     fn skills_dir(&self) -> &str {
@@ -131,5 +156,74 @@ mod tests {
                 .policy_yaml()
                 .contains("/sandbox/.local/bin/opencode")
         );
+    }
+
+    #[test]
+    fn supported_inference_includes_anthropic() {
+        assert!(
+            OpencodeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::Anthropic)
+        );
+    }
+
+    #[test]
+    fn supported_inference_includes_ollama() {
+        assert!(
+            OpencodeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::Ollama)
+        );
+    }
+
+    #[test]
+    fn supported_inference_includes_vertexai() {
+        assert!(
+            OpencodeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::VertexAi)
+        );
+    }
+
+    #[test]
+    fn set_inference_with_none_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("existing.json".to_string(), "content".to_string());
+        let result = OpencodeAgent.set_inference(files.clone(), None, None);
+        assert_eq!(result, files);
+    }
+
+    #[test]
+    fn set_inference_with_ollama_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::Ollama),
+            Some("http://host.openshell.internal:11434/v1"),
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_ollama_without_url_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("existing.json".to_string(), "content".to_string());
+        let result = OpencodeAgent.set_inference(
+            files.clone(),
+            Some(&inference::InferenceKind::Ollama),
+            None,
+        );
+        assert_eq!(result, files);
+    }
+
+    #[test]
+    fn set_inference_with_anthropic_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("existing.json".to_string(), "content".to_string());
+        let result = OpencodeAgent.set_inference(
+            files.clone(),
+            Some(&inference::InferenceKind::Anthropic),
+            None,
+        );
+        assert_eq!(result, files);
     }
 }

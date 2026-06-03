@@ -19,6 +19,7 @@ mod build;
 mod config;
 mod containerfile;
 mod feature;
+mod host;
 mod inference;
 mod policy;
 mod workspace;
@@ -92,14 +93,29 @@ fn run(
     let config = config::load(config_path.clone())?;
     let workspace = workspace::load_from(workspace_base)?;
     let agent = agent_kind.map(agent::from_kind);
-    let inference = inference_kind.map(inference::from_kind);
+    if let (Some(a), Some(ik)) = (agent.as_deref(), &inference_kind)
+        && !a.supported_inference().contains(ik)
+    {
+        return Err(format!(
+            "agent '{}' does not support the selected inference provider",
+            a.id()
+        )
+        .into());
+    }
+    let inference = inference_kind.clone().map(inference::from_kind);
     let context_dir = tempfile::Builder::new()
         .prefix("openshell-image-builder")
         .tempdir()?;
     let features = feature::stage_all(workspace.as_ref(), context_dir.path())?;
     let has_agent_settings = if let Some(a) = agent.as_deref() {
         let settings_dir = config::agent_settings_dir(config_path.as_deref(), a.id())?;
-        stage_agent_settings(a, settings_dir.as_deref(), context_dir.path())?
+        stage_agent_settings(
+            a,
+            settings_dir.as_deref(),
+            inference_kind.as_ref(),
+            None, // future: cli.endpoint.as_deref()
+            context_dir.path(),
+        )?
     } else {
         false
     };
@@ -184,9 +200,24 @@ fn stage_skills(
     Ok(staged)
 }
 
+fn resolve_base_url(
+    inference: Option<&inference::InferenceKind>,
+    endpoint: Option<&str>,
+) -> Option<String> {
+    match inference {
+        Some(inference::InferenceKind::Ollama) => {
+            let raw = endpoint.unwrap_or(inference::OLLAMA_DEFAULT_BASE_URL);
+            Some(host::rewrite_localhost(raw))
+        }
+        _ => None,
+    }
+}
+
 fn stage_agent_settings(
     agent: &dyn agent::Agent,
     settings_dir: Option<&Path>,
+    inference: Option<&inference::InferenceKind>,
+    endpoint: Option<&str>,
     context_dir: &Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let existing = match settings_dir {
@@ -194,9 +225,11 @@ fn stage_agent_settings(
         None => HashMap::new(),
     };
 
-    let onboarding = agent.skip_onboarding(existing);
+    let base_url = resolve_base_url(inference, endpoint);
+    let files = agent.skip_onboarding(existing);
+    let files = agent.set_inference(files, inference, base_url.as_deref());
 
-    if settings_dir.is_none() && onboarding.is_empty() {
+    if settings_dir.is_none() && files.is_empty() {
         return Ok(false);
     }
 
@@ -206,8 +239,12 @@ fn stage_agent_settings(
     if let Some(dir) = settings_dir {
         copy_dir(dir, &dest)?;
     }
-    for (name, content) in &onboarding {
-        std::fs::write(dest.join(name), content)?;
+    for (name, content) in &files {
+        let path = dest.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, content)?;
     }
     Ok(true)
 }
@@ -310,6 +347,17 @@ mod tests {
         assert!(yaml.contains("aiplatform.googleapis.com"));
     }
 
+    #[test]
+    fn build_policy_with_ollama_inference_includes_host_openshell_internal() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::OllamaInference),
+        )
+        .unwrap();
+        assert!(yaml.contains("host.openshell.internal"));
+    }
+
     // copy_dir
 
     #[test]
@@ -371,7 +419,14 @@ mod tests {
     fn stage_agent_settings_creates_agent_settings_subdir() {
         let settings = tempfile::tempdir().unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
+        stage_agent_settings(
+            &agent::OpencodeAgent,
+            Some(settings.path()),
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         assert!(context.path().join("agent-settings").is_dir());
     }
 
@@ -380,7 +435,14 @@ mod tests {
         let settings = tempfile::tempdir().unwrap();
         std::fs::write(settings.path().join("myfile"), "data").unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
+        stage_agent_settings(
+            &agent::OpencodeAgent,
+            Some(settings.path()),
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(context.path().join("agent-settings").join("myfile")).unwrap(),
             "data"
@@ -394,7 +456,14 @@ mod tests {
         std::fs::create_dir(&subdir).unwrap();
         std::fs::write(subdir.join("settings.json"), "{}").unwrap();
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::OpencodeAgent, Some(settings.path()), context.path()).unwrap();
+        stage_agent_settings(
+            &agent::OpencodeAgent,
+            Some(settings.path()),
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(
                 context
@@ -411,14 +480,16 @@ mod tests {
     #[test]
     fn stage_agent_settings_returns_false_for_noop_agent_without_settings_dir() {
         let context = tempfile::tempdir().unwrap();
-        let staged = stage_agent_settings(&agent::OpencodeAgent, None, context.path()).unwrap();
+        let staged =
+            stage_agent_settings(&agent::OpencodeAgent, None, None, None, context.path()).unwrap();
         assert!(!staged);
     }
 
     #[test]
     fn stage_agent_settings_creates_claude_json_for_claude_agent_without_settings_dir() {
         let context = tempfile::tempdir().unwrap();
-        let staged = stage_agent_settings(&agent::ClaudeAgent, None, context.path()).unwrap();
+        let staged =
+            stage_agent_settings(&agent::ClaudeAgent, None, None, None, context.path()).unwrap();
         assert!(staged);
         assert!(
             context
@@ -432,13 +503,36 @@ mod tests {
     #[test]
     fn stage_agent_settings_claude_json_has_onboarding_flags() {
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::ClaudeAgent, None, context.path()).unwrap();
+        stage_agent_settings(&agent::ClaudeAgent, None, None, None, context.path()).unwrap();
         let content =
             std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
                 .unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["hasCompletedOnboarding"], true);
         assert_eq!(json["projects"]["/sandbox"]["hasTrustDialogAccepted"], true);
+    }
+
+    #[test]
+    fn stage_agent_settings_with_ollama_creates_opencode_config() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::Ollama),
+            None,
+            context.path(),
+        )
+        .unwrap();
+        assert!(staged);
+        assert!(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json")
+                .exists()
+        );
     }
 
     // stage_skills
@@ -589,6 +683,26 @@ mod tests {
     }
 
     #[test]
+    fn run_with_claude_agent_and_ollama_inference_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            Some(agent::AgentKind::Claude),
+            Some(inference::InferenceKind::Ollama),
+            &FakeRunner(0),
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not support the selected inference provider")
+        );
+    }
+
+    #[test]
     fn run_returns_error_when_runner_fails() {
         let tmp = tempfile::tempdir().unwrap();
         let result = run(
@@ -600,5 +714,41 @@ mod tests {
             &FakeRunner(1),
         );
         assert!(result.is_err());
+    }
+
+    // resolve_base_url
+
+    #[test]
+    fn resolve_base_url_ollama_default_rewrites_localhost() {
+        let url = resolve_base_url(Some(&inference::InferenceKind::Ollama), None).unwrap();
+        assert!(url.contains("host.openshell.internal"));
+        assert!(!url.contains("localhost"));
+    }
+
+    #[test]
+    fn resolve_base_url_ollama_custom_endpoint_rewrites_localhost() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::Ollama),
+            Some("http://localhost:9999/v1"),
+        )
+        .unwrap();
+        assert_eq!(url, "http://host.openshell.internal:9999/v1");
+    }
+
+    #[test]
+    fn resolve_base_url_ollama_non_localhost_endpoint_unchanged() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::Ollama),
+            Some("http://remote-server:11434/v1"),
+        )
+        .unwrap();
+        assert_eq!(url, "http://remote-server:11434/v1");
+    }
+
+    #[test]
+    fn resolve_base_url_returns_none_for_non_local_providers() {
+        assert!(resolve_base_url(Some(&inference::InferenceKind::Anthropic), None).is_none());
+        assert!(resolve_base_url(Some(&inference::InferenceKind::VertexAi), None).is_none());
+        assert!(resolve_base_url(None, None).is_none());
     }
 }

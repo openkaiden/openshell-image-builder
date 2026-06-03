@@ -15,10 +15,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod anthropic;
+mod ollama;
 mod vertexai;
+
+pub(crate) use ollama::DEFAULT_BASE_URL as OLLAMA_DEFAULT_BASE_URL;
 
 #[cfg(test)]
 pub use anthropic::AnthropicInference;
+#[cfg(test)]
+pub use ollama::OllamaInference;
 #[cfg(test)]
 pub use vertexai::VertexAiInference;
 
@@ -29,9 +34,10 @@ pub trait Inference {
     fn policy_yaml(&self, agent_binary: &str) -> String;
 }
 
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, PartialEq, ValueEnum)]
 pub enum InferenceKind {
     Anthropic,
+    Ollama,
     #[value(name = "vertexai")]
     VertexAi,
 }
@@ -39,6 +45,7 @@ pub enum InferenceKind {
 pub fn from_kind(kind: InferenceKind) -> Box<dyn Inference> {
     match kind {
         InferenceKind::Anthropic => Box::new(anthropic::AnthropicInference),
+        InferenceKind::Ollama => Box::new(ollama::OllamaInference),
         InferenceKind::VertexAi => Box::new(vertexai::VertexAiInference),
     }
 }

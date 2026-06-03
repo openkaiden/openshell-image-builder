@@ -98,6 +98,10 @@ static HUMMINGBIRD_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static HUMMINGBIRD_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
+static UBI_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
+static HUMMINGBIRD_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -576,12 +580,29 @@ fn check_vertexai_policy(image: &str, expected: bool) {
     }
 }
 
+fn check_ollama_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: ollama"),
+            "ollama inference policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: ollama"),
+            "ollama inference policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Matrix: base_image × agent — one test module per variant
 // ---------------------------------------------------------------------------
 
 macro_rules! image_tests {
-    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal, has_anthropic: $has_anthropic:literal, has_vertexai: $has_vertexai:literal) => {
+    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal, has_anthropic: $has_anthropic:literal, has_vertexai: $has_vertexai:literal, has_ollama: $has_ollama:literal) => {
         mod $mod_name {
             use super::*;
 
@@ -644,30 +665,40 @@ macro_rules! image_tests {
             fn policy_has_vertexai_rules() {
                 check_vertexai_policy($image_fn(), $has_vertexai);
             }
+
+            #[test]
+            #[ignore]
+            fn policy_has_ollama_rules() {
+                check_ollama_policy($image_fn(), $has_ollama);
+            }
         }
     };
 }
 
-image_tests!(ubuntu,                  ubuntu_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
-image_tests!(ubuntu_claude,           ubuntu_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
-image_tests!(ubuntu_opencode,         ubuntu_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
-image_tests!(ubuntu_claude_vertexai,  ubuntu_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
-image_tests!(ubuntu_opencode_vertexai,ubuntu_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
-image_tests!(fedora,                  fedora_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
-image_tests!(fedora_claude,           fedora_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
-image_tests!(fedora_opencode,         fedora_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
-image_tests!(fedora_claude_vertexai,  fedora_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
-image_tests!(fedora_opencode_vertexai,fedora_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
-image_tests!(ubi,                     ubi_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
-image_tests!(ubi_claude,              ubi_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
-image_tests!(ubi_opencode,            ubi_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
-image_tests!(ubi_claude_vertexai,     ubi_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
-image_tests!(ubi_opencode_vertexai,   ubi_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
-image_tests!(hummingbird,                     hummingbird_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
-image_tests!(hummingbird_claude,              hummingbird_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
-image_tests!(hummingbird_opencode,            hummingbird_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
-image_tests!(hummingbird_claude_vertexai,     hummingbird_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
-image_tests!(hummingbird_opencode_vertexai,   hummingbird_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
+image_tests!(ubuntu,                  ubuntu_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false, has_ollama: false);
+image_tests!(ubuntu_claude,           ubuntu_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(ubuntu_opencode,         ubuntu_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(ubuntu_claude_vertexai,  ubuntu_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(ubuntu_opencode_vertexai,ubuntu_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(fedora,                  fedora_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false, has_ollama: false);
+image_tests!(fedora_claude,           fedora_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(fedora_opencode,         fedora_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(fedora_claude_vertexai,  fedora_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(fedora_opencode_vertexai,fedora_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(ubi,                     ubi_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false, has_ollama: false);
+image_tests!(ubi_claude,              ubi_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(ubi_opencode,            ubi_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(ubi_claude_vertexai,     ubi_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(ubi_opencode_vertexai,   ubi_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(hummingbird,                     hummingbird_image,                     has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false, has_ollama: false);
+image_tests!(hummingbird_claude,              hummingbird_claude_image,              has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(hummingbird_opencode,            hummingbird_opencode_image,            has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false, has_ollama: false);
+image_tests!(hummingbird_claude_vertexai,     hummingbird_claude_vertexai_image,     has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(hummingbird_opencode_vertexai,   hummingbird_opencode_vertexai_image,   has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true, has_ollama: false);
+image_tests!(ubuntu_opencode_ollama,          ubuntu_opencode_ollama_image,          has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: false, has_ollama: true);
+image_tests!(fedora_opencode_ollama,          fedora_opencode_ollama_image,          has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: false, has_ollama: true);
+image_tests!(ubi_opencode_ollama,             ubi_opencode_ollama_image,             has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: false, has_ollama: true);
+image_tests!(hummingbird_opencode_ollama,     hummingbird_opencode_ollama_image,     has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: false, has_ollama: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds
@@ -945,6 +976,66 @@ fn ubuntu_opencode_skills_image() -> &'static str {
         build_image_with_skills(
             "openshell-test-ubuntu-opencode-skills:integration",
             &["--agent", "opencode"],
+        )
+    })
+}
+
+fn ubuntu_opencode_ollama_image() -> &'static str {
+    UBUNTU_OPENCODE_OLLAMA_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-ollama:integration",
+            &["--agent", "opencode", "--inference", "ollama"],
+        )
+    })
+}
+
+fn fedora_opencode_ollama_image() -> &'static str {
+    FEDORA_OPENCODE_OLLAMA_IMAGE.get_or_init(|| {
+        let config = fedora_config_dir();
+        build_image(
+            "openshell-test-fedora-opencode-ollama:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+            ],
+        )
+    })
+}
+
+fn ubi_opencode_ollama_image() -> &'static str {
+    UBI_OPENCODE_OLLAMA_IMAGE.get_or_init(|| {
+        let config = ubi_config_dir();
+        build_image(
+            "openshell-test-ubi-opencode-ollama:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+            ],
+        )
+    })
+}
+
+fn hummingbird_opencode_ollama_image() -> &'static str {
+    HUMMINGBIRD_OPENCODE_OLLAMA_IMAGE.get_or_init(|| {
+        let config = hummingbird_config_dir();
+        build_image(
+            "openshell-test-hummingbird-opencode-ollama:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+            ],
         )
     })
 }
@@ -1422,6 +1513,114 @@ mod skills_opencode {
 }
 
 // ---------------------------------------------------------------------------
+// OpenCode + Ollama config integration tests
+// ---------------------------------------------------------------------------
+
+mod opencode_ollama {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn config_json_present() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_image(),
+            "test -f /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "opencode config.json not found at /sandbox/.config/opencode/config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn config_json_contains_host_openshell_internal() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_image(),
+            "grep -q 'host.openshell.internal' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "host.openshell.internal not found in opencode config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn config_json_contains_qwen3_coder_model() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_image(),
+            "grep -q 'qwen3-coder:30b' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "qwen3-coder:30b not found in opencode config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn config_json_contains_lfm2_5_model() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_image(),
+            "grep -q 'lfm2.5' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "lfm2.5 not found in opencode config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn config_json_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_image(),
+            "stat -c '%U' /sandbox/.config/opencode/config.json",
+        );
+        assert!(out.status.success(), "failed to stat opencode config.json");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "opencode config.json not owned by sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn config_json_not_present_without_ollama() {
+        let out = run_in_image(
+            ubuntu_opencode_image(),
+            "test -f /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            !out.status.success(),
+            "opencode config.json should not be present when built without --inference ollama"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_with_ollama_inference_is_rejected() {
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let status = Command::new(binary)
+            .args([
+                "--agent",
+                "claude",
+                "--inference",
+                "ollama",
+                "should-not-be-built:test",
+            ])
+            .status()
+            .expect("binary should run");
+        assert!(
+            !status.success(),
+            "building with --agent claude --inference ollama should fail"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -1460,6 +1659,10 @@ fn cleanup_images() {
         "openshell-test-ubuntu-opencode-settings:integration",
         "openshell-test-ubuntu-claude-skills:integration",
         "openshell-test-ubuntu-opencode-skills:integration",
+        "openshell-test-ubuntu-opencode-ollama:integration",
+        "openshell-test-fedora-opencode-ollama:integration",
+        "openshell-test-ubi-opencode-ollama:integration",
+        "openshell-test-hummingbird-opencode-ollama:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])

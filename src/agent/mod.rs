@@ -25,6 +25,8 @@ pub use opencode::OpencodeAgent;
 use clap::ValueEnum;
 use std::collections::HashMap;
 
+use crate::inference;
+
 pub trait Agent {
     fn id(&self) -> &str;
     fn install(&self) -> String;
@@ -33,6 +35,20 @@ pub trait Agent {
         ""
     }
     fn skip_onboarding(&self, files: HashMap<String, String>) -> HashMap<String, String> {
+        files
+    }
+    /// Returns the inference kinds this agent supports.
+    fn supported_inference(&self) -> Vec<inference::InferenceKind> {
+        vec![]
+    }
+    /// Merges inference provider configuration into `files` and returns the result.
+    /// `base_url` overrides the provider's default endpoint when `Some`.
+    fn set_inference(
+        &self,
+        files: HashMap<String, String>,
+        _inference: Option<&inference::InferenceKind>,
+        _base_url: Option<&str>,
+    ) -> HashMap<String, String> {
         files
     }
     fn skills_dir(&self) -> &str {

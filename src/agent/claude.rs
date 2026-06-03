@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 
 use super::Agent;
+use crate::inference;
 
 const CLAUDE_CONFIG_FILE: &str = ".claude.json";
 const SANDBOX_HOME: &str = "/sandbox";
@@ -56,6 +57,13 @@ impl Agent for ClaudeAgent {
             serde_json::to_string_pretty(&config).expect("valid json value"),
         );
         files
+    }
+
+    fn supported_inference(&self) -> Vec<inference::InferenceKind> {
+        vec![
+            inference::InferenceKind::Anthropic,
+            inference::InferenceKind::VertexAi,
+        ]
     }
 
     fn skills_dir(&self) -> &str {
@@ -166,6 +174,33 @@ mod tests {
     #[test]
     fn skills_dir_is_claude_skills() {
         assert_eq!(ClaudeAgent.skills_dir(), "/sandbox/.claude/skills");
+    }
+
+    #[test]
+    fn supported_inference_includes_anthropic() {
+        assert!(
+            ClaudeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::Anthropic)
+        );
+    }
+
+    #[test]
+    fn supported_inference_includes_vertexai() {
+        assert!(
+            ClaudeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::VertexAi)
+        );
+    }
+
+    #[test]
+    fn supported_inference_excludes_ollama() {
+        assert!(
+            !ClaudeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::Ollama)
+        );
     }
 
     #[test]
