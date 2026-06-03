@@ -1621,6 +1621,279 @@ mod opencode_ollama {
 }
 
 // ---------------------------------------------------------------------------
+// --model integration tests
+// ---------------------------------------------------------------------------
+
+const MODEL_CLAUDE: &str = "claude-sonnet-4-6";
+const MODEL_OLLAMA: &str = "qwen3-coder:30b";
+
+static UBUNTU_CLAUDE_ANTHROPIC_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_CLAUDE_VERTEXAI_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_ANTHROPIC_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_OLLAMA_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+
+fn ubuntu_claude_anthropic_model_image() -> &'static str {
+    UBUNTU_CLAUDE_ANTHROPIC_MODEL_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-claude-anthropic-model:integration",
+            &[
+                "--agent",
+                "claude",
+                "--inference",
+                "anthropic",
+                "--model",
+                MODEL_CLAUDE,
+            ],
+        )
+    })
+}
+
+fn ubuntu_claude_vertexai_model_image() -> &'static str {
+    UBUNTU_CLAUDE_VERTEXAI_MODEL_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-claude-vertexai-model:integration",
+            &[
+                "--agent",
+                "claude",
+                "--inference",
+                "vertexai",
+                "--model",
+                MODEL_CLAUDE,
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_anthropic_model_image() -> &'static str {
+    UBUNTU_OPENCODE_ANTHROPIC_MODEL_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-anthropic-model:integration",
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "anthropic",
+                "--model",
+                MODEL_CLAUDE,
+            ],
+        )
+    })
+}
+
+fn ubuntu_opencode_ollama_model_image() -> &'static str {
+    UBUNTU_OPENCODE_OLLAMA_MODEL_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-ollama-model:integration",
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+                "--model",
+                MODEL_OLLAMA,
+            ],
+        )
+    })
+}
+
+// claude + anthropic + model: .claude/settings.json written with "model" field
+mod model_claude_anthropic {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_present() {
+        let out = run_in_image(
+            ubuntu_claude_anthropic_model_image(),
+            "test -f /sandbox/.claude/settings.json",
+        );
+        assert!(
+            out.status.success(),
+            ".claude/settings.json not found in /sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_contains_model() {
+        let cmd = format!(
+            "grep -q '\"{}\"' /sandbox/.claude/settings.json",
+            MODEL_CLAUDE
+        );
+        let out = run_in_image(ubuntu_claude_anthropic_model_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "model value not found in .claude/settings.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_claude_anthropic_model_image(),
+            "stat -c '%U' /sandbox/.claude/settings.json",
+        );
+        assert!(out.status.success(), "failed to stat .claude/settings.json");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            ".claude/settings.json not owned by sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_not_present_without_model() {
+        let out = run_in_image(
+            ubuntu_claude_image(),
+            "test -f /sandbox/.claude/settings.json",
+        );
+        assert!(
+            !out.status.success(),
+            ".claude/settings.json should not be present when built without --model"
+        );
+    }
+}
+
+// claude + vertexai + model: .claude/settings.json written with "model" field
+mod model_claude_vertexai {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_present() {
+        let out = run_in_image(
+            ubuntu_claude_vertexai_model_image(),
+            "test -f /sandbox/.claude/settings.json",
+        );
+        assert!(
+            out.status.success(),
+            ".claude/settings.json not found in /sandbox"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_settings_json_contains_model() {
+        let cmd = format!(
+            "grep -q '\"{}\"' /sandbox/.claude/settings.json",
+            MODEL_CLAUDE
+        );
+        let out = run_in_image(ubuntu_claude_vertexai_model_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "model value not found in .claude/settings.json"
+        );
+    }
+}
+
+// opencode + anthropic + model (no --endpoint): config.json written with "model" field
+mod model_opencode_anthropic {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_present() {
+        let out = run_in_image(
+            ubuntu_opencode_anthropic_model_image(),
+            "test -f /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "opencode config.json not found at /sandbox/.config/opencode/config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_contains_model() {
+        let cmd = format!(
+            "grep -q '\"{}\"' /sandbox/.config/opencode/config.json",
+            MODEL_CLAUDE
+        );
+        let out = run_in_image(ubuntu_opencode_anthropic_model_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "model value not found in opencode config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_not_present_without_model_or_endpoint() {
+        let out = run_in_image(
+            ubuntu_opencode_image(),
+            "test -f /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            !out.status.success(),
+            "opencode config.json should not be present when built without --model or --endpoint"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_owned_by_sandbox() {
+        let out = run_in_image(
+            ubuntu_opencode_anthropic_model_image(),
+            "stat -c '%U' /sandbox/.config/opencode/config.json",
+        );
+        assert!(out.status.success(), "failed to stat opencode config.json");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "sandbox",
+            "opencode config.json not owned by sandbox"
+        );
+    }
+}
+
+// opencode + ollama + model: config.json uses "ollama/<model>" prefix, only specified model listed
+mod model_opencode_ollama {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_contains_model_with_provider_prefix() {
+        let cmd = format!(
+            "grep -q '\"ollama/{}\"' /sandbox/.config/opencode/config.json",
+            MODEL_OLLAMA
+        );
+        let out = run_in_image(ubuntu_opencode_ollama_model_image(), &cmd);
+        assert!(
+            out.status.success(),
+            "prefixed model value ollama/{MODEL_OLLAMA} not found in opencode config.json"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_does_not_contain_preset_models() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_model_image(),
+            "grep -q 'lfm2.5' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            !out.status.success(),
+            "preset model lfm2.5 should not be present when --model is specified"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_config_json_still_contains_base_url() {
+        let out = run_in_image(
+            ubuntu_opencode_ollama_model_image(),
+            "grep -q 'host.openshell.internal' /sandbox/.config/opencode/config.json",
+        );
+        assert!(
+            out.status.success(),
+            "host.openshell.internal not found in opencode config.json"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // --endpoint integration tests
 // ---------------------------------------------------------------------------
 
@@ -1895,6 +2168,10 @@ fn cleanup_images() {
         "openshell-test-ubuntu-claude-anthropic-endpoint:integration",
         "openshell-test-ubuntu-opencode-anthropic-endpoint:integration",
         "openshell-test-ubuntu-opencode-ollama-custom-endpoint:integration",
+        "openshell-test-ubuntu-claude-anthropic-model:integration",
+        "openshell-test-ubuntu-claude-vertexai-model:integration",
+        "openshell-test-ubuntu-opencode-anthropic-model:integration",
+        "openshell-test-ubuntu-opencode-ollama-model:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
