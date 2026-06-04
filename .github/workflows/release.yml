@@ -149,7 +149,7 @@ jobs:
 
       - name: Create PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.KAIDEN_BOT_TOKEN }}
         run: |
           BRANCH="bump-next-${{ steps.version.outputs.next_version }}"
           git checkout -b "$BRANCH"
