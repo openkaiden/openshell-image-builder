@@ -1,30 +1,42 @@
 # openshell-image-builder
 
-[OpenShell](https://github.com/NVIDIA/OpenShell-Community) is NVIDIA's runtime environment for autonomous AI agents. It provides isolated sandboxes where agents can safely run, iterate, and be verified — without risk to the host system or other workloads.
+[OpenShell](https://github.com/NVIDIA/OpenShell-Community) is NVIDIA's runtime environment for autonomous AI agents. It provides isolated sandboxes where agents can safely run and iterate — without risk to the host system or your credentials.
 
 OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/OpenShell-Community), but they are general-purpose. `openshell-image-builder` lets you build your own: lightweight, workspace-specific images that contain only what you need — without writing a Containerfile by hand.
 
-- **Base image selection** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag.
-- **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints. Settings files can be embedded into the image from a local directory.
-- **Inference configuration** — scoped network access to LLM backends, with optional endpoint override (`--endpoint`) to route traffic through a custom URL or proxy, and optional model pin (`--model`) to bake a default model into the image.
-- **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
-- **Sandbox policy** — every image ships `/etc/openshell/policy.yaml`, built from a base policy merged with inference and agent rules.
+The tool assembles the image in layers — base image, agent installation, agent settings, OpenShell network policy, and project-specific toolchains:
 
-Supported agents:
+1. **Base image** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag. Ubuntu 24.04 is the default.
+2. **Agent installation** (`--agent`) — the agent binary is pre-installed in `PATH`.
+3. **Agent settings**
+   - **User settings** — settings files are pre-populated with settings files provided by the user.
+   - **Auto-onboarding** — settings files are updated to skip onboarding steps (choose theme, trust directory, etc).
+   - **Skills** — skills are copied in the agent's skills directory.
+   - **Inference settings** (`--inference`) — inference provider definition is added to settings files.
+   - **Endpoint override** (`--endpoint`) — optional custom URL for inference provider is set in inference provider definition.
+   - **Model** (`--model`) — default model is baked into the agent's settings files.
+4. **OpenShell policy** — `/etc/openshell/policy.yaml` shipped with every image.
+   - **Base policy** — Git operations over HTTPS and the GitHub REST API.
+   - **Agent network rules** — agent-specific endpoints are added by `--agent`.
+   - **Inference network rules** — LLM backend endpoints are added by `--inference`.
+5. **Installation of project-specific toolchains** — toolchains and utilities declared as Dev Container Features in `.kaiden/workspace.json` are installed in the image.
 
-- [Claude Code](https://claude.ai/code) (`--agent claude`)
-- [OpenCode](https://opencode.ai) (`--agent opencode`)
+### Agent Supported Features
 
-Agent settings configuration includes:
+| Agent      | User settings | Auto-onboarding | Skills |
+| ---------- | ------------- | --------------- | ------ |
+| `claude`   | Yes           | Yes             | Yes<br>`~/.claude/skills/`   |
+| `opencode` | Yes           | N/A             | Yes<br>`~/.opencode/skills/` |
 
-- Settings files embedded from a local directory into the sandbox home.
-- Automatic onboarding skip so the agent starts without interactive setup dialogs (Claude Code only, not necessary for OpenCode).
+### Agent × Inference Supported Features
 
-Supported inference providers:
-
-- [Anthropic](https://www.anthropic.com) (`--inference anthropic`)
-- [Vertex AI](https://cloud.google.com/vertex-ai) (`--inference vertexai`)
-- [Ollama](https://ollama.com) (`--inference ollama`) — local models running on the host machine (OpenCode only)
+| Agent      | Inference   | Inference settings             | Endpoint override                          | Model selection                                  |
+| ---------- | ----------- | ------------------------------ | ------------------------------------------ | ------------------------------------------------ |
+| `claude`   | `anthropic` | N/A                            | Yes<br>`ENV ANTHROPIC_BASE_URL`            | Yes<br>`model` in `.claude/settings.json`        |
+| `claude`   | `vertexai`  | N/A                            | No<br>fixed endpoint                       | Yes<br>`model` in `.claude/settings.json`        |
+| `opencode` | `anthropic` | N/A, Yes if endpoint override  | Yes<br>opencode config `baseURL`           | Yes<br>`model` in `.config/opencode/config.json` |
+| `opencode` | `vertexai`  | N/A                            | No<br>fixed endpoint                       | Yes<br>`model` in `.config/opencode/config.json` |
+| `opencode` | `ollama`    | Yes<br>Ollama provider config  | Yes<br>`baseURL` in Ollama provider config | Yes<br>`model` in `.config/opencode/config.json` |
 
 ## Quick start
 
