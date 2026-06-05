@@ -84,7 +84,14 @@ pub fn generate(
         "hummingbird" => dnf_system_stage(
             "registry.access.redhat.com/hi/core-runtime",
             tag,
-            &["bind-utils", "openssh-server", "procps-ng", "which", "tar"],
+            &[
+                "bind-utils",
+                "iproute",
+                "openssh-server",
+                "procps-ng",
+                "which",
+                "tar",
+            ],
         ),
         "ubuntu" => ubuntu_system_stage(tag),
         image => {
@@ -562,6 +569,15 @@ mod tests {
     fn hummingbird_copies_policy_yaml() {
         let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
         assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
+    }
+
+    #[test]
+    fn hummingbird_containerfile_includes_iproute() {
+        let content = build_cf(&hummingbird_config(), None, &[], false, &[]).unwrap();
+        assert!(
+            content.contains("iproute"),
+            "hummingbird image must install iproute for network namespace support"
+        );
     }
 
     #[test]
