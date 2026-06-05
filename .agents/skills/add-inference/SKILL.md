@@ -15,6 +15,7 @@ Adding a new inference provider touches six layers: the inference module, `main.
 - **`anthropic`** — cloud, fixed default endpoint, supports `--endpoint` override, bakes env var into image for Claude.
 - **`vertexai`** — cloud, proprietary fixed endpoint, rejects `--endpoint`, no default URL.
 - **`ollama`** — local, default URL (`localhost:11434`), rewrites `localhost` → `host.openshell.internal`, writes opencode config file.
+- **`openai`** — cloud, default endpoint `api.openai.com`, supports `--endpoint` override, opencode only, writes opencode config with native `openai/<model>` or `@ai-sdk/openai-compatible` custom provider.
 
 ## Step 1 — implement the `Inference` trait (`src/inference/<provider>.rs`)
 

@@ -16,6 +16,7 @@
 
 mod anthropic;
 mod ollama;
+mod openai;
 mod vertexai;
 
 pub(crate) use ollama::DEFAULT_BASE_URL as OLLAMA_DEFAULT_BASE_URL;
@@ -24,6 +25,8 @@ pub(crate) use ollama::DEFAULT_BASE_URL as OLLAMA_DEFAULT_BASE_URL;
 pub use anthropic::AnthropicInference;
 #[cfg(test)]
 pub use ollama::OllamaInference;
+#[cfg(test)]
+pub use openai::OpenAiInference;
 #[cfg(test)]
 pub use vertexai::VertexAiInference;
 
@@ -50,6 +53,8 @@ fn parse_host_port(url: &str) -> Option<(String, u16)> {
 pub enum InferenceKind {
     Anthropic,
     Ollama,
+    #[value(name = "openai")]
+    OpenAi,
     #[value(name = "vertexai")]
     VertexAi,
 }
@@ -58,6 +63,7 @@ pub fn from_kind(kind: InferenceKind) -> Box<dyn Inference> {
     match kind {
         InferenceKind::Anthropic => Box::new(anthropic::AnthropicInference),
         InferenceKind::Ollama => Box::new(ollama::OllamaInference),
+        InferenceKind::OpenAi => Box::new(openai::OpenAiInference),
         InferenceKind::VertexAi => Box::new(vertexai::VertexAiInference),
     }
 }
