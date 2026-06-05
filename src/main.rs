@@ -234,6 +234,7 @@ fn resolve_base_url(
             Some(host::rewrite_localhost(raw))
         }
         Some(inference::InferenceKind::Anthropic) => endpoint.map(str::to_string),
+        Some(inference::InferenceKind::OpenAi) => endpoint.map(host::rewrite_localhost),
         _ => None,
     }
 }
@@ -936,5 +937,88 @@ mod tests {
         )
         .unwrap();
         assert_eq!(url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn build_policy_with_openai_inference_includes_api_openai_com() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::OpencodeAgent),
+            Some(&inference::OpenAiInference),
+            None,
+        )
+        .unwrap();
+        assert!(yaml.contains("api.openai.com"));
+    }
+
+    #[test]
+    fn resolve_base_url_returns_none_for_openai_without_endpoint() {
+        assert!(resolve_base_url(Some(&inference::InferenceKind::OpenAi), None).is_none());
+    }
+
+    #[test]
+    fn resolve_base_url_openai_with_endpoint_returns_endpoint() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::OpenAi),
+            Some("https://my-openai-proxy.example.com/v1"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://my-openai-proxy.example.com/v1");
+    }
+
+    #[test]
+    fn resolve_base_url_openai_endpoint_rewrites_localhost() {
+        let url = resolve_base_url(
+            Some(&inference::InferenceKind::OpenAi),
+            Some("http://localhost:8080/v1"),
+        )
+        .unwrap();
+        assert_eq!(url, "http://host.openshell.internal:8080/v1");
+    }
+
+    #[test]
+    fn run_with_claude_agent_and_openai_inference_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            tmp.path(),
+            Some(agent::AgentKind::Claude),
+            Some(inference::InferenceKind::OpenAi),
+            None,
+            None,
+            &FakeRunner(0),
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not support the selected inference provider")
+        );
+    }
+
+    #[test]
+    fn stage_agent_settings_with_openai_and_model_creates_opencode_config() {
+        let context = tempfile::tempdir().unwrap();
+        let staged = stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::OpenAi),
+            None,
+            Some("gpt-4o"),
+            context.path(),
+        )
+        .unwrap();
+        assert!(staged);
+        assert!(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json")
+                .exists()
+        );
     }
 }

@@ -37,6 +37,7 @@ The tool assembles the image in layers — base image, agent installation, agent
 | `opencode` | `anthropic` | N/A, Yes if endpoint override  | Yes<br>opencode config `baseURL`           | Yes<br>`model` in `.config/opencode/config.json` |
 | `opencode` | `vertexai`  | N/A                            | No<br>fixed endpoint                       | Yes<br>`model` in `.config/opencode/config.json` |
 | `opencode` | `ollama`    | Yes<br>Ollama provider config  | Yes<br>`baseURL` in Ollama provider config | Yes<br>`model` in `.config/opencode/config.json` |
+| `opencode` | `openai`    | Yes if model or endpoint       | Yes<br>`baseURL` in custom provider config | Yes<br>`model` in `.config/opencode/config.json` |
 
 ## Quick start
 
@@ -208,6 +209,7 @@ Pass `--inference` to allow the agent to reach its LLM backend. This is separate
 | Anthropic | `anthropic` | `claude`, `opencode`    | Anthropic API (`api.anthropic.com`) |
 | Vertex AI | `vertexai`  | `claude`, `opencode`    | Google Vertex AI (`oauth2.googleapis.com`, `aiplatform.googleapis.com`, `*-aiplatform.googleapis.com`) |
 | Ollama    | `ollama`    | `opencode`              | Local models on the host machine, reached via `host.openshell.internal:11434` |
+| OpenAI    | `openai`    | `opencode`              | OpenAI API (`api.openai.com`), or any OpenAI-compatible endpoint via `--endpoint` |
 
 ```sh
 openshell-image-builder --agent claude --inference anthropic myimage:latest
@@ -215,6 +217,7 @@ openshell-image-builder --agent opencode --inference anthropic myimage:latest
 openshell-image-builder --agent claude --inference vertexai myimage:latest
 openshell-image-builder --agent opencode --inference vertexai myimage:latest
 openshell-image-builder --agent opencode --inference ollama myimage:latest
+openshell-image-builder --agent opencode --inference openai myimage:latest
 ```
 
 ### Custom endpoint (`--endpoint`)
@@ -228,6 +231,7 @@ Use `--endpoint` to override the inference provider's default URL — useful for
 | `opencode` | `anthropic` | ✅        | Written to opencode config as `provider.anthropic.options.baseURL` |
 | `opencode` | `vertexai`  | ❌        | Rejected — Vertex AI has a proprietary fixed endpoint |
 | `opencode` | `ollama`    | ✅        | Written to opencode config as `provider.ollama.options.baseURL`; `localhost` in the URL is rewritten to `host.openshell.internal`; defaults to `http://host.openshell.internal:11434/v1` if omitted |
+| `opencode` | `openai`    | ✅        | When provided, opencode is configured to use a custom `@ai-sdk/openai-compatible` provider with `options.baseURL` set to the given URL |
 
 ```sh
 # Route Claude Code through a custom Anthropic API proxy
@@ -259,6 +263,7 @@ Use `--model` to bake a default model into the image. The agent uses this model 
 | `opencode` | `anthropic` | Written to opencode config as top-level `"model"` field (can be combined with `--endpoint`) |
 | `opencode` | `vertexai`  | Written to opencode config as top-level `"model"` field |
 | `opencode` | `ollama`    | Written to opencode config as top-level `"model": "ollama/<model>"` field; only the specified model is registered in the models map |
+| `opencode` | `openai`    | Written to opencode config as `"model": "openai/<model>"` (native OpenAI) or `"model": "custom/<model>"` (with `--endpoint`) |
 
 ```sh
 # Pin Claude Code to a specific model
@@ -318,7 +323,7 @@ Every image built by this tool includes `/etc/openshell/policy.yaml`. This file 
 The policy is built in three layers, merged in order:
 
 1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
-2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard); `--inference ollama` adds `host.openshell.internal:11434` for local model access.
+2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard); `--inference ollama` adds `host.openshell.internal:11434` for local model access; `--inference openai` adds `api.openai.com` (or the custom endpoint host when `--endpoint` is used).
 3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
 
 ## Dev Container Features
@@ -423,7 +428,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
 | `--config <CONFIG>`        | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
 | `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
-| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`) |
+| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`, `openai`) |
 | `--endpoint <URL>`         | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
 | `--model <MODEL>`          | Default model for the agent to use (see [Default model](#default-model---model)) |
 | `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
@@ -525,6 +530,40 @@ $ openshell sandbox create \
   --name opencode_ollama_sandbox \
   --no-auto-providers \
   -- opencode
+```
+
+### OpenCode agent + OpenAI models provider
+
+```sh
+$ openshell-image-builder \
+  --agent opencode \
+  --inference openai \
+  --model gpt-4o \
+  sandbox_image:opencode_openai
+
+$ openshell provider create \
+  --type generic \
+  --credential OPENAI_API_KEY=sk-... \
+  --name opencode_openai_provider
+
+$ openshell sandbox create \
+  --from sandbox_image:opencode_openai \
+  --provider opencode_openai_provider \
+  --upload . \
+  --name opencode_openai_sandbox \
+  --no-auto-providers \
+  -- opencode
+```
+
+To use an OpenAI-compatible endpoint (e.g. Azure OpenAI, a local proxy, or another provider's API):
+
+```sh
+$ openshell-image-builder \
+  --agent opencode \
+  --inference openai \
+  --endpoint https://my-openai-proxy.example.com/v1 \
+  --model gpt-4o \
+  sandbox_image:opencode_openai_custom
 ```
 
 ### OpenCode agent + Vertex AI models provider

@@ -16,6 +16,7 @@
 
 mod anthropic;
 mod ollama;
+mod openai;
 mod vertexai;
 
 use std::collections::HashMap;
@@ -49,6 +50,7 @@ impl Agent for OpencodeAgent {
         vec![
             inference::InferenceKind::Anthropic,
             inference::InferenceKind::Ollama,
+            inference::InferenceKind::OpenAi,
             inference::InferenceKind::VertexAi,
         ]
     }
@@ -66,6 +68,9 @@ impl Agent for OpencodeAgent {
             }
             Some(inference::InferenceKind::Anthropic) if base_url.is_some() || model.is_some() => {
                 anthropic::configure(files, base_url, model)
+            }
+            Some(inference::InferenceKind::OpenAi) if base_url.is_some() || model.is_some() => {
+                openai::configure(files, base_url, model)
             }
             Some(inference::InferenceKind::VertexAi) if model.is_some() => {
                 vertexai::configure(files, model.unwrap())
@@ -293,6 +298,50 @@ mod tests {
         let result = OpencodeAgent.set_inference(
             files.clone(),
             Some(&inference::InferenceKind::VertexAi),
+            None,
+            None,
+        );
+        assert_eq!(result, files);
+    }
+
+    #[test]
+    fn supported_inference_includes_openai() {
+        assert!(
+            OpencodeAgent
+                .supported_inference()
+                .contains(&inference::InferenceKind::OpenAi)
+        );
+    }
+
+    #[test]
+    fn set_inference_with_openai_and_model_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::OpenAi),
+            None,
+            Some("gpt-4o"),
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_openai_and_endpoint_creates_opencode_config() {
+        let result = OpencodeAgent.set_inference(
+            HashMap::new(),
+            Some(&inference::InferenceKind::OpenAi),
+            Some("https://my-openai-proxy.example.com"),
+            None,
+        );
+        assert!(result.contains_key(".config/opencode/config.json"));
+    }
+
+    #[test]
+    fn set_inference_with_openai_without_url_or_model_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("existing.json".to_string(), "content".to_string());
+        let result = OpencodeAgent.set_inference(
+            files.clone(),
+            Some(&inference::InferenceKind::OpenAi),
             None,
             None,
         );
