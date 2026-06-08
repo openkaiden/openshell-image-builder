@@ -19,7 +19,24 @@ The tool assembles the image in layers — base image, agent installation, agent
    - **Base policy** — Git operations over HTTPS and the GitHub REST API.
    - **Agent network rules** — agent-specific endpoints are added by `--agent`.
    - **Inference network rules** — LLM backend endpoints are added by `--inference`.
+   - **Workspace network rules** — user-defined hosts declared in `.kaiden/workspace.json` are added to the policy.
 5. **Installation of project-specific toolchains** — toolchains and utilities declared as Dev Container Features in `.kaiden/workspace.json` are installed in the image.
+
+### workspace.json fields
+
+`.kaiden/workspace.json` is the per-workspace configuration file. The following fields are supported:
+
+| Field | Description | Details |
+| ----- | ----------- | ------- |
+| `features` | Dev Container Features to install in the image | [Dev Container Features](#dev-container-features) |
+| `skills` | Skill directories to copy into the agent's skills directory | [Skills](#skills) |
+| `network.hosts` | Hostnames (and optional ports) to allow through the sandbox network policy | [Workspace network rules](#workspace-network-rules) |
+| ~~`network.mode`~~ | ~~`allow` or `deny` — OpenShell always enforces deny mode; allow-all is not supported~~ | ~~not used by the image builder~~ |
+| ~~`environment`~~ | ~~Environment variables to inject into the workspace~~ | ~~not used by the image builder~~ |
+| ~~`mcp`~~ | ~~MCP server configuration (command-based and URL-based servers)~~ | ~~not used by the image builder~~ |
+| ~~`mounts`~~ | ~~Host directories to mount in the workspace~~ | ~~not used by the image builder~~ |
+| ~~`ports`~~ | ~~TCP ports to expose from the workspace~~ | ~~not used by the image builder~~ |
+| ~~`secrets`~~ | ~~Secret names to inject into the workspace~~ | ~~not used by the image builder~~ |
 
 ### Agent Supported Features
 
@@ -320,11 +337,12 @@ Every image built by this tool includes `/etc/openshell/policy.yaml`. This file 
 - **Filesystem policy** — which paths are read-only, read-write, or inaccessible to the `sandbox` user.
 - **Network policies** — which binaries are allowed to connect to which hosts and ports.
 
-The policy is built in three layers, merged in order:
+The policy is built in four layers, merged in order:
 
 1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
 2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard); `--inference ollama` adds `host.openshell.internal:11434` for local model access; `--inference openai` adds `api.openai.com` (or the custom endpoint host when `--endpoint` is used).
 3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
+4. **Workspace** (added from `network.hosts` in `.kaiden/workspace.json`) — user-defined hosts that any binary in standard PATH directories (`/bin`, `/usr/bin`, `/usr/local/bin`, `/sandbox/.local/bin`) and the agent binary (when present) may reach. See [Workspace network rules](#workspace-network-rules).
 
 ## Dev Container Features
 
@@ -416,6 +434,57 @@ When `.kaiden/workspace.json` is present, the tool:
 4. Cleans up all feature files from the image with `RUN rm -rf /tmp/feature-install` after all features are installed.
 
 Features run as root so install scripts can write to system paths.
+
+## Workspace network rules
+
+The OpenShell sandbox enforces a **deny-by-default** network policy: all outbound connections are blocked unless explicitly listed in the policy. There is no supported way to allow all hosts — the sandbox does not implement an allow-all mode. The `network.mode` field in `workspace.json` (which some orchestrators read to switch between `deny` and `allow`) is ignored by the image builder; the policy is always assembled in deny mode with explicit allow-rules.
+
+Use the `network.hosts` field in `.kaiden/workspace.json` to allow additional hosts — for example, package registries or internal APIs that your project's toolchain needs to reach.
+
+```json
+{
+  "network": {
+    "hosts": [
+      "index.crates.io",
+      "static.crates.io",
+      "static.rust-lang.org"
+    ]
+  }
+}
+```
+
+Each entry is a hostname, optionally followed by a port (`host:port`). When no port is given, port 443 is used.
+
+The builder merges a single `workspace` network policy rule into `policy.yaml` that covers all listed hosts. The rule authorises the following binaries to connect to those hosts:
+
+| Binary glob | Covers |
+|---|---|
+| `/bin/**` | Core system utilities |
+| `/usr/bin/**` | Standard system binaries (e.g. `curl`) |
+| `/usr/local/bin/**` | Locally installed tools |
+| `/sandbox/.local/bin/**` | User-local binaries |
+| agent binary | The agent binary (e.g. `/sandbox/.local/bin/claude`) when `--agent` is used |
+
+An invalid or unparseable host entry (e.g. a bare space or malformed URL) causes the build to fail immediately with a descriptive error message.
+
+### Example — Rust project with crates.io access
+
+```json
+{
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {}
+  },
+  "network": {
+    "hosts": [
+      "index.crates.io",
+      "static.crates.io",
+      "static.rust-lang.org"
+    ]
+  }
+}
+```
+
+With this configuration, `cargo build` and `cargo fetch` inside the sandbox can download crate metadata and source tarballs.
 
 ## Full option reference
 
