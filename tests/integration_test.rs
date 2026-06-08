@@ -107,6 +107,40 @@ static FEDORA_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static HUMMINGBIRD_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_OPENAI_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_SSL_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_SSL_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
+
+fn ssl_cert_fixture_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-ca.crt")
+}
+
+fn ubuntu_ssl_certs_image() -> &'static str {
+    UBUNTU_SSL_CERTS_IMAGE.get_or_init(|| {
+        let cert = ssl_cert_fixture_path();
+        let cert_str = cert.to_str().unwrap();
+        build_image(
+            "openshell-test-ubuntu-ssl-certs:integration",
+            &["--ssl-certs", cert_str],
+        )
+    })
+}
+
+fn fedora_ssl_certs_image() -> &'static str {
+    FEDORA_SSL_CERTS_IMAGE.get_or_init(|| {
+        let config = fedora_config_dir();
+        let cert = ssl_cert_fixture_path();
+        let cert_str = cert.to_str().unwrap();
+        build_image(
+            "openshell-test-fedora-ssl-certs:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--ssl-certs",
+                cert_str,
+            ],
+        )
+    })
+}
 
 fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -2320,6 +2354,92 @@ mod endpoint_rejection {
 }
 
 // ---------------------------------------------------------------------------
+// --ssl-certs integration tests
+// ---------------------------------------------------------------------------
+
+mod ssl_certs {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn ubuntu_cert_present_in_image() {
+        let out = run_in_image(
+            ubuntu_ssl_certs_image(),
+            "test -f /usr/local/share/ca-certificates/system-ca.crt",
+        );
+        assert!(
+            out.status.success(),
+            "system-ca.crt not found in /usr/local/share/ca-certificates/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn ubuntu_cert_contains_pem_data() {
+        let out = run_in_image(
+            ubuntu_ssl_certs_image(),
+            "grep -q 'BEGIN CERTIFICATE' /usr/local/share/ca-certificates/system-ca.crt",
+        );
+        assert!(
+            out.status.success(),
+            "system-ca.crt does not contain PEM certificate data"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn ubuntu_cert_absent_without_flag() {
+        let out = run_in_image(
+            ubuntu_image(),
+            "test -f /usr/local/share/ca-certificates/system-ca.crt",
+        );
+        assert!(
+            !out.status.success(),
+            "system-ca.crt should not be present in image built without --ssl-certs"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn fedora_cert_present_in_image() {
+        let out = run_in_image(
+            fedora_ssl_certs_image(),
+            "test -f /etc/pki/ca-trust/source/anchors/system-ca.crt",
+        );
+        assert!(
+            out.status.success(),
+            "system-ca.crt not found in /etc/pki/ca-trust/source/anchors/"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn fedora_cert_contains_pem_data() {
+        let out = run_in_image(
+            fedora_ssl_certs_image(),
+            "grep -q 'BEGIN CERTIFICATE' /etc/pki/ca-trust/source/anchors/system-ca.crt",
+        );
+        assert!(
+            out.status.success(),
+            "system-ca.crt does not contain PEM certificate data"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn fedora_cert_absent_without_flag() {
+        let out = run_in_image(
+            fedora_image(),
+            "test -f /etc/pki/ca-trust/source/anchors/system-ca.crt",
+        );
+        assert!(
+            !out.status.success(),
+            "system-ca.crt should not be present in image built without --ssl-certs"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -2374,6 +2494,8 @@ fn cleanup_images() {
         "openshell-test-ubuntu-claude-vertexai-model:integration",
         "openshell-test-ubuntu-opencode-anthropic-model:integration",
         "openshell-test-ubuntu-opencode-ollama-model:integration",
+        "openshell-test-ubuntu-ssl-certs:integration",
+        "openshell-test-fedora-ssl-certs:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
