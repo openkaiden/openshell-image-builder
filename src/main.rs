@@ -277,25 +277,24 @@ fn stage_agent_settings(
     Ok(true)
 }
 
-fn parse_workspace_host(s: &str) -> (String, u16) {
+fn parse_workspace_host(s: &str) -> Result<(String, u16), Box<dyn std::error::Error>> {
     let url_str = if s.contains("://") {
         s.to_string()
     } else {
         format!("https://{s}")
     };
-    if let Ok(parsed) = url::Url::parse(&url_str)
-        && let Some(host) = parsed.host_str()
-    {
-        let port = parsed.port().unwrap_or(443);
-        return (host.to_string(), port);
-    }
-    (s.to_string(), 443)
+    let parsed =
+        url::Url::parse(&url_str).map_err(|e| format!("invalid workspace host '{s}': {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("workspace host is missing hostname: '{s}'"))?;
+    Ok((host.to_string(), parsed.port().unwrap_or(443)))
 }
 
 fn workspace_hosts_policy(
     hosts: &[String],
     agent_binary: Option<&str>,
-) -> policy::NetworkPolicyRule {
+) -> Result<policy::NetworkPolicyRule, Box<dyn std::error::Error>> {
     let mut binaries = vec![
         policy::NetworkBinary::new("/bin/**"),
         policy::NetworkBinary::new("/usr/bin/**"),
@@ -305,21 +304,20 @@ fn workspace_hosts_policy(
     if let Some(bin) = agent_binary {
         binaries.push(policy::NetworkBinary::new(bin));
     }
-    policy::NetworkPolicyRule {
+    Ok(policy::NetworkPolicyRule {
         name: "workspace".to_string(),
         endpoints: hosts
             .iter()
             .map(|s| {
-                let (host, port) = parse_workspace_host(s);
-                policy::NetworkEndpoint {
+                parse_workspace_host(s).map(|(host, port)| policy::NetworkEndpoint {
                     host,
                     port,
                     ..Default::default()
-                }
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         binaries,
-    }
+    })
 }
 
 fn build_policy(
@@ -354,7 +352,7 @@ fn build_policy(
         let agent_binary = agent.map(|a| a.binary_path());
         sandbox_policy.network_policies.insert(
             "workspace".to_string(),
-            workspace_hosts_policy(hosts, agent_binary),
+            workspace_hosts_policy(hosts, agent_binary)?,
         );
     }
     Ok(policy::serialize_sandbox_policy(&sandbox_policy)?)
@@ -1105,23 +1103,28 @@ mod tests {
 
     #[test]
     fn parse_workspace_host_defaults_to_443() {
-        let (host, port) = parse_workspace_host("example.com");
+        let (host, port) = parse_workspace_host("example.com").unwrap();
         assert_eq!(host, "example.com");
         assert_eq!(port, 443);
     }
 
     #[test]
     fn parse_workspace_host_respects_explicit_port() {
-        let (host, port) = parse_workspace_host("example.com:8080");
+        let (host, port) = parse_workspace_host("example.com:8080").unwrap();
         assert_eq!(host, "example.com");
         assert_eq!(port, 8080);
     }
 
     #[test]
     fn parse_workspace_host_with_full_https_url() {
-        let (host, port) = parse_workspace_host("https://example.com:8443");
+        let (host, port) = parse_workspace_host("https://example.com:8443").unwrap();
         assert_eq!(host, "example.com");
         assert_eq!(port, 8443);
+    }
+
+    #[test]
+    fn parse_workspace_host_fails_on_invalid_input() {
+        assert!(parse_workspace_host("not a valid host !!!").is_err());
     }
 
     // workspace_hosts_policy
@@ -1129,7 +1132,7 @@ mod tests {
     #[test]
     fn workspace_hosts_policy_creates_one_rule_with_all_endpoints() {
         let hosts = vec!["example.com".to_string(), "api.foo.com:8443".to_string()];
-        let rule = workspace_hosts_policy(&hosts, None);
+        let rule = workspace_hosts_policy(&hosts, None).unwrap();
         assert_eq!(rule.name, "workspace");
         assert_eq!(rule.endpoints.len(), 2);
         assert_eq!(rule.endpoints[0].host, "example.com");
@@ -1141,7 +1144,7 @@ mod tests {
     #[test]
     fn workspace_hosts_policy_includes_glob_binaries() {
         let hosts = vec!["example.com".to_string()];
-        let rule = workspace_hosts_policy(&hosts, None);
+        let rule = workspace_hosts_policy(&hosts, None).unwrap();
         let paths: Vec<&str> = rule.binaries.iter().map(|b| b.path.as_str()).collect();
         assert!(paths.contains(&"/bin/**"));
         assert!(paths.contains(&"/usr/bin/**"));
@@ -1152,7 +1155,7 @@ mod tests {
     #[test]
     fn workspace_hosts_policy_includes_agent_binary_when_provided() {
         let hosts = vec!["example.com".to_string()];
-        let rule = workspace_hosts_policy(&hosts, Some("/sandbox/.local/bin/claude"));
+        let rule = workspace_hosts_policy(&hosts, Some("/sandbox/.local/bin/claude")).unwrap();
         let paths: Vec<&str> = rule.binaries.iter().map(|b| b.path.as_str()).collect();
         assert!(paths.contains(&"/sandbox/.local/bin/claude"));
     }
@@ -1160,8 +1163,14 @@ mod tests {
     #[test]
     fn workspace_hosts_policy_omits_agent_binary_when_none() {
         let hosts = vec!["example.com".to_string()];
-        let rule = workspace_hosts_policy(&hosts, None);
+        let rule = workspace_hosts_policy(&hosts, None).unwrap();
         assert_eq!(rule.binaries.len(), 4);
+    }
+
+    #[test]
+    fn workspace_hosts_policy_fails_on_invalid_host() {
+        let hosts = vec!["not a valid host !!!".to_string()];
+        assert!(workspace_hosts_policy(&hosts, None).is_err());
     }
 
     // build_policy with workspace hosts
