@@ -88,7 +88,7 @@ pub struct NetworkPolicyRule {
     pub binaries: Vec<NetworkBinary>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkEndpoint {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -137,6 +137,15 @@ pub struct NetworkBinary {
     #[serde(default, skip_serializing)]
     #[allow(dead_code)]
     harness: bool,
+}
+
+impl NetworkBinary {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            harness: false,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

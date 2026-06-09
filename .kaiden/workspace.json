@@ -2,5 +2,12 @@
   "features": {
     "ghcr.io/devcontainers/features/rust:1": {},
     "./features/cargo-llvm-cov": {}
+  },
+  "network": {
+    "hosts": [
+      "index.crates.io",
+      "static.crates.io",
+      "static.rust-lang.org"
+    ]
   }
 }

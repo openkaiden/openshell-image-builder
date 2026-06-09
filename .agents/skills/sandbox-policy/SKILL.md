@@ -11,11 +11,12 @@ How the sandbox policy is assembled, what each section means, and how to add or 
 
 Every built image contains `/etc/openshell/policy.yaml`. The openshell runtime reads it at startup to configure filesystem access, the user the agent runs as, and which network endpoints each binary is allowed to reach.
 
-The final policy is assembled by `build_policy()` in `src/main.rs` by merging three sources:
+The final policy is assembled by `build_policy()` in `src/main.rs` by merging four sources:
 
 1. **Base policy** — `assets/policy.yaml`, committed to the repo. Contains filesystem and process config, plus baseline network rules shared by all images (git, gh CLI).
 2. **Inference fragment** — returned by `Inference::policy_yaml(agent_binary, base_url)`. Adds network rules for the LLM backend. Only included when both `--agent` and `--inference` are given (the method needs the agent binary path to scope the rule).
 3. **Agent fragment** — returned by `Agent::policy_yaml()`. Adds agent-specific network rules (e.g., Claude needs `platform.claude.com` for telemetry). Only included if the string is non-empty.
+4. **Workspace fragment** — constructed from `workspace.network.hosts` in `.kaiden/workspace.json`. Adds a single `workspace` rule whose endpoints are the user-declared hosts and whose binaries are the four PATH globs (`/bin/**`, `/usr/bin/**`, `/usr/local/bin/**`, `/sandbox/.local/bin/**`) plus the agent binary when present. Only included when `network.hosts` is non-empty. An invalid host entry causes the build to fail immediately.
 
 ## YAML schema
 
@@ -97,11 +98,23 @@ if let Some(agent) = agent {
         sandbox_policy.network_policies.extend(fragment.network_policies);
     }
 }
+
+if let Some(hosts) = workspace
+    .and_then(|ws| ws.network.as_ref())
+    .map(|net| net.hosts.as_slice())
+    .filter(|h| !h.is_empty())
+{
+    let agent_binary = agent.map(|a| a.binary_path());
+    sandbox_policy.network_policies.insert(
+        "workspace".to_string(),
+        workspace_hosts_policy(hosts, agent_binary)?,
+    );
+}
 ```
 
 `network_policies` is a `BTreeMap<String, NetworkPolicyRule>`. The BTreeMap key is the merge slug (e.g. `"anthropic"`, `"claude_code"`). `extend()` means: if a fragment uses a slug that already exists in the base, the base entry is silently replaced. The `name` field inside the rule is separate — it is what the runtime displays, and should match the slug by convention.
 
-**Merge order**: base → inference → agent. An agent rule can therefore override a base or inference rule with the same slug.
+**Merge order**: base → inference → agent → workspace. A workspace rule uses `insert()`, so it can override any earlier rule with the slug `"workspace"` (none exists in base or the other fragments).
 
 ## Existing network rules
 
@@ -113,6 +126,7 @@ if let Some(agent) = agent {
 | `vertexai` | VertexAiInference | `oauth2.googleapis.com:443`, `aiplatform.googleapis.com:443`, `*-aiplatform.googleapis.com:443` | agent binary |
 | `ollama` | OllamaInference | `host.openshell.internal:11434` (or custom host:port) | agent binary |
 | `claude_code` | ClaudeAgent | `raw.githubusercontent.com:443`, `platform.claude.com:443`, `api.github.com:443` (read-only) | `/sandbox/.local/bin/claude` |
+| `workspace` | `workspace.network.hosts` | all user-declared hosts (port defaults to 443) | `/bin/**`, `/usr/bin/**`, `/usr/local/bin/**`, `/sandbox/.local/bin/**`, agent binary |
 
 ## Where to make changes
 
@@ -205,6 +219,7 @@ fn build_policy_with_myprovider_inference_includes_expected_host() {
         BASE_POLICY_YAML,
         Some(&agent::ClaudeAgent),
         Some(&inference::MyProviderInference),
+        None,
         None,
     ).unwrap();
     assert!(yaml.contains("api.myprovider.com"));
