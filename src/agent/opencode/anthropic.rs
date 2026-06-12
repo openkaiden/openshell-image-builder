@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 
+use super::OPENCODE_CONFIG_FILE;
+
 pub(super) fn configure(
     mut files: HashMap<String, String>,
     base_url: Option<&str>,
@@ -33,7 +35,7 @@ pub(super) fn configure(
         config["model"] = serde_json::json!(m);
     }
     files.insert(
-        ".config/opencode/config.json".to_string(),
+        OPENCODE_CONFIG_FILE.to_string(),
         serde_json::to_string_pretty(&config).expect("valid json value"),
     );
     files
@@ -50,7 +52,7 @@ mod tests {
             Some("https://my-anthropic-proxy.example.com"),
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -60,7 +62,7 @@ mod tests {
             Some("https://my-anthropic-proxy.example.com"),
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(config.contains("https://my-anthropic-proxy.example.com"));
     }
 
@@ -72,7 +74,7 @@ mod tests {
             None,
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert!(config["provider"]["anthropic"].is_object());
     }
 
@@ -83,7 +85,7 @@ mod tests {
             Some("https://my-anthropic-proxy.example.com"),
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(serde_json::from_str::<serde_json::Value>(config).is_ok());
     }
 
@@ -95,7 +97,7 @@ mod tests {
             Some("claude-opus-4-5"),
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "claude-opus-4-5");
     }
 
@@ -103,7 +105,7 @@ mod tests {
     fn configure_without_url_sets_model_only() {
         let result = configure(HashMap::new(), None, Some("claude-opus-4-5"));
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "claude-opus-4-5");
         assert!(config["provider"]["anthropic"]["options"].is_null());
     }
@@ -116,7 +118,7 @@ mod tests {
             Some("claude-opus-4-5"),
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "claude-opus-4-5");
         assert_eq!(
             config["provider"]["anthropic"]["options"]["baseURL"],

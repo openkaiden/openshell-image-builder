@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 
+use super::OPENCODE_CONFIG_FILE;
+
 pub(super) fn configure(
     mut files: HashMap<String, String>,
     base_url: &str,
@@ -43,7 +45,7 @@ pub(super) fn configure(
         config["model"] = serde_json::json!(format!("ollama/{m}"));
     }
     files.insert(
-        ".config/opencode/config.json".to_string(),
+        OPENCODE_CONFIG_FILE.to_string(),
         serde_json::to_string_pretty(&config).expect("valid json value"),
     );
     files
@@ -60,7 +62,7 @@ mod tests {
             "http://host.openshell.internal:11434/v1",
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -70,7 +72,7 @@ mod tests {
             "http://host.openshell.internal:11434/v1",
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(config.contains("http://host.openshell.internal:11434/v1"));
     }
 
@@ -81,7 +83,7 @@ mod tests {
             "http://host.openshell.internal:11434/v1",
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(config.contains("ollama"));
         assert!(config.contains("@ai-sdk/openai-compatible"));
     }
@@ -94,7 +96,7 @@ mod tests {
             None,
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         let models = &config["provider"]["ollama"]["models"];
         assert!(models["lfm2.5"]["tools"].as_bool().unwrap());
         assert!(models["qwen3-coder:30b"]["tools"].as_bool().unwrap());
@@ -107,7 +109,7 @@ mod tests {
             "http://host.openshell.internal:11434/v1",
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(serde_json::from_str::<serde_json::Value>(config).is_ok());
     }
 
@@ -119,7 +121,7 @@ mod tests {
             Some("qwen3-coder:30b"),
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "ollama/qwen3-coder:30b");
     }
 
@@ -131,7 +133,7 @@ mod tests {
             Some("my-custom-model"),
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         let models = &config["provider"]["ollama"]["models"];
         assert!(models["my-custom-model"]["tools"].as_bool().unwrap());
         assert!(models["lfm2.5"].is_null());
