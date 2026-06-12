@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 
+use super::OPENCODE_CONFIG_FILE;
+
 pub(super) fn configure(
     mut files: HashMap<String, String>,
     model: &str,
@@ -25,7 +27,7 @@ pub(super) fn configure(
         "model": model
     });
     files.insert(
-        ".config/opencode/config.json".to_string(),
+        OPENCODE_CONFIG_FILE.to_string(),
         serde_json::to_string_pretty(&config).expect("valid json value"),
     );
     files
@@ -38,21 +40,21 @@ mod tests {
     #[test]
     fn configure_creates_opencode_config() {
         let result = configure(HashMap::new(), "vertex/claude-opus-4-5");
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
     fn configure_sets_model_field() {
         let result = configure(HashMap::new(), "vertex/claude-opus-4-5");
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "vertex/claude-opus-4-5");
     }
 
     #[test]
     fn configure_config_is_valid_json() {
         let result = configure(HashMap::new(), "vertex/claude-opus-4-5");
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(serde_json::from_str::<serde_json::Value>(config).is_ok());
     }
 }

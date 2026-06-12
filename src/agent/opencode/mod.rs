@@ -26,7 +26,7 @@ use kdn_workspace_configuration::McpConfiguration;
 use super::Agent;
 use crate::inference;
 
-const OPENCODE_CONFIG_FILE: &str = ".config/opencode/config.json";
+pub(crate) const OPENCODE_CONFIG_FILE: &str = ".config/opencode/config.json";
 
 pub struct OpencodeAgent;
 
@@ -274,7 +274,7 @@ mod tests {
             Some("http://host.openshell.internal:11434/v1"),
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
             Some("https://my-anthropic-proxy.example.com"),
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
             Some("https://my-anthropic-proxy.example.com"),
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(config.contains("https://my-anthropic-proxy.example.com"));
     }
 
@@ -334,7 +334,7 @@ mod tests {
             None,
             Some("claude-opus-4-5"),
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
             None,
             Some("vertex/claude-opus-4-5"),
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -378,7 +378,7 @@ mod tests {
             None,
             Some("gpt-4o"),
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -389,7 +389,7 @@ mod tests {
             Some("https://my-openai-proxy.example.com"),
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
