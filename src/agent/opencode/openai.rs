@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 
+use super::OPENCODE_CONFIG_FILE;
+
 pub(super) fn configure(
     mut files: HashMap<String, String>,
     base_url: Option<&str>,
@@ -41,7 +43,7 @@ pub(super) fn configure(
         config["model"] = serde_json::json!(format!("openai/{m}"));
     }
     files.insert(
-        ".config/opencode/config.json".to_string(),
+        OPENCODE_CONFIG_FILE.to_string(),
         serde_json::to_string_pretty(&config).expect("valid json value"),
     );
     files
@@ -54,14 +56,14 @@ mod tests {
     #[test]
     fn configure_with_model_creates_opencode_config() {
         let result = configure(HashMap::new(), None, Some("gpt-4o"));
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
     fn configure_with_model_sets_native_openai_prefix() {
         let result = configure(HashMap::new(), None, Some("gpt-4o"));
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "openai/gpt-4o");
     }
 
@@ -69,7 +71,7 @@ mod tests {
     fn configure_with_model_does_not_add_provider_block() {
         let result = configure(HashMap::new(), None, Some("gpt-4o"));
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert!(config["provider"].is_null());
     }
 
@@ -80,7 +82,7 @@ mod tests {
             Some("https://my-openai-proxy.example.com"),
             None,
         );
-        assert!(result.contains_key(".config/opencode/config.json"));
+        assert!(result.contains_key(OPENCODE_CONFIG_FILE));
     }
 
     #[test]
@@ -91,7 +93,7 @@ mod tests {
             None,
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert!(config["provider"]["custom"].is_object());
         assert_eq!(
             config["provider"]["custom"]["npm"],
@@ -106,7 +108,7 @@ mod tests {
             Some("https://my-openai-proxy.example.com"),
             None,
         );
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(config.contains("https://my-openai-proxy.example.com"));
     }
 
@@ -118,7 +120,7 @@ mod tests {
             Some("gpt-4o"),
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "custom/gpt-4o");
     }
 
@@ -130,7 +132,7 @@ mod tests {
             None,
         );
         let config: serde_json::Value =
-            serde_json::from_str(result.get(".config/opencode/config.json").unwrap()).unwrap();
+            serde_json::from_str(result.get(OPENCODE_CONFIG_FILE).unwrap()).unwrap();
         assert_eq!(config["model"], "custom/gpt-4o");
         assert!(config["provider"]["custom"]["models"]["gpt-4o"].is_object());
     }
@@ -138,7 +140,7 @@ mod tests {
     #[test]
     fn configure_config_is_valid_json() {
         let result = configure(HashMap::new(), None, Some("gpt-4o"));
-        let config = result.get(".config/opencode/config.json").unwrap();
+        let config = result.get(OPENCODE_CONFIG_FILE).unwrap();
         assert!(serde_json::from_str::<serde_json::Value>(config).is_ok());
     }
 }

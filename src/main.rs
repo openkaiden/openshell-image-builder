@@ -127,6 +127,7 @@ fn run(
             inference_kind.as_ref(),
             endpoint,
             model,
+            workspace.as_ref().and_then(|ws| ws.mcp.as_ref()),
             context_dir.path(),
         )?
     } else {
@@ -246,6 +247,7 @@ fn stage_agent_settings(
     inference: Option<&inference::InferenceKind>,
     endpoint: Option<&str>,
     model: Option<&str>,
+    mcp: Option<&kdn_workspace_configuration::McpConfiguration>,
     context_dir: &Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let existing = match settings_dir {
@@ -256,6 +258,7 @@ fn stage_agent_settings(
     let base_url = resolve_base_url(inference, endpoint);
     let files = agent.skip_onboarding(existing);
     let files = agent.set_inference(files, inference, base_url.as_deref(), model);
+    let files = agent.set_mcp_servers(files, mcp);
 
     if settings_dir.is_none() && files.is_empty() {
         return Ok(false);
@@ -560,6 +563,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             context.path(),
         )
         .unwrap();
@@ -574,6 +578,7 @@ mod tests {
         stage_agent_settings(
             &agent::OpencodeAgent,
             Some(settings.path()),
+            None,
             None,
             None,
             None,
@@ -596,6 +601,7 @@ mod tests {
         stage_agent_settings(
             &agent::OpencodeAgent,
             Some(settings.path()),
+            None,
             None,
             None,
             None,
@@ -624,6 +630,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             context.path(),
         )
         .unwrap();
@@ -633,9 +640,16 @@ mod tests {
     #[test]
     fn stage_agent_settings_creates_claude_json_for_claude_agent_without_settings_dir() {
         let context = tempfile::tempdir().unwrap();
-        let staged =
-            stage_agent_settings(&agent::ClaudeAgent, None, None, None, None, context.path())
-                .unwrap();
+        let staged = stage_agent_settings(
+            &agent::ClaudeAgent,
+            None,
+            None,
+            None,
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         assert!(staged);
         assert!(
             context
@@ -649,7 +663,16 @@ mod tests {
     #[test]
     fn stage_agent_settings_claude_json_has_onboarding_flags() {
         let context = tempfile::tempdir().unwrap();
-        stage_agent_settings(&agent::ClaudeAgent, None, None, None, None, context.path()).unwrap();
+        stage_agent_settings(
+            &agent::ClaudeAgent,
+            None,
+            None,
+            None,
+            None,
+            None,
+            context.path(),
+        )
+        .unwrap();
         let content =
             std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
                 .unwrap();
@@ -665,6 +688,7 @@ mod tests {
             &agent::OpencodeAgent,
             None,
             Some(&inference::InferenceKind::Ollama),
+            None,
             None,
             None,
             context.path(),
@@ -920,6 +944,7 @@ mod tests {
             Some(&inference::InferenceKind::Anthropic),
             None,
             Some("claude-opus-4-5"),
+            None,
             context.path(),
         )
         .unwrap();
@@ -944,6 +969,7 @@ mod tests {
             Some(&inference::InferenceKind::VertexAi),
             None,
             Some("vertex/claude-opus-4-5"),
+            None,
             context.path(),
         )
         .unwrap();
@@ -1084,6 +1110,7 @@ mod tests {
             Some(&inference::InferenceKind::OpenAi),
             None,
             Some("gpt-4o"),
+            None,
             context.path(),
         )
         .unwrap();
@@ -1097,6 +1124,105 @@ mod tests {
                 .join("config.json")
                 .exists()
         );
+    }
+
+    #[test]
+    fn stage_agent_settings_with_mcp_command_writes_mcp_servers_to_claude_json() {
+        let context = tempfile::tempdir().unwrap();
+        let mcp = kdn_workspace_configuration::McpConfiguration {
+            commands: vec![kdn_workspace_configuration::McpCommand {
+                name: "my-mcp".to_string(),
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "my-mcp-pkg".to_string()],
+                env: Default::default(),
+            }],
+            servers: vec![],
+        };
+        stage_agent_settings(
+            &agent::ClaudeAgent,
+            None,
+            None,
+            None,
+            None,
+            Some(&mcp),
+            context.path(),
+        )
+        .unwrap();
+        let content =
+            std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
+                .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["mcpServers"]["my-mcp"]["type"], "stdio");
+        assert_eq!(json["mcpServers"]["my-mcp"]["command"], "npx");
+    }
+
+    #[test]
+    fn stage_agent_settings_with_mcp_server_writes_sse_entry_to_claude_json() {
+        let context = tempfile::tempdir().unwrap();
+        let mcp = kdn_workspace_configuration::McpConfiguration {
+            commands: vec![],
+            servers: vec![kdn_workspace_configuration::McpServer {
+                name: "remote-mcp".to_string(),
+                url: "https://mcp.example.com".to_string(),
+                headers: Default::default(),
+            }],
+        };
+        stage_agent_settings(
+            &agent::ClaudeAgent,
+            None,
+            None,
+            None,
+            None,
+            Some(&mcp),
+            context.path(),
+        )
+        .unwrap();
+        let content =
+            std::fs::read_to_string(context.path().join("agent-settings").join(".claude.json"))
+                .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["mcpServers"]["remote-mcp"]["type"], "sse");
+        assert_eq!(
+            json["mcpServers"]["remote-mcp"]["url"],
+            "https://mcp.example.com"
+        );
+    }
+
+    #[test]
+    fn stage_agent_settings_opencode_with_mcp_command_writes_local_entry_to_config() {
+        let context = tempfile::tempdir().unwrap();
+        let mcp = kdn_workspace_configuration::McpConfiguration {
+            commands: vec![kdn_workspace_configuration::McpCommand {
+                name: "playwright".to_string(),
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@playwright/mcp@latest".to_string()],
+                env: Default::default(),
+            }],
+            servers: vec![],
+        };
+        stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::Anthropic),
+            None,
+            Some("claude-opus-4-5"),
+            Some(&mcp),
+            context.path(),
+        )
+        .unwrap();
+        let content = std::fs::read_to_string(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json"),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["mcp"]["playwright"]["type"], "local");
+        assert_eq!(json["mcp"]["playwright"]["command"][0], "npx");
+        assert_eq!(json["mcp"]["playwright"]["enabled"], true);
     }
 
     // parse_workspace_host
