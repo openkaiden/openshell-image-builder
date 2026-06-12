@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 
+use kdn_workspace_configuration::McpConfiguration;
+
 use super::Agent;
 use crate::inference;
 
@@ -87,6 +89,55 @@ impl Agent for ClaudeAgent {
                 serde_json::to_string_pretty(&config).expect("valid json value"),
             );
         }
+        files
+    }
+
+    fn set_mcp_servers(
+        &self,
+        mut files: HashMap<String, String>,
+        mcp: Option<&McpConfiguration>,
+    ) -> HashMap<String, String> {
+        let Some(mcp) = mcp else { return files };
+        let content = files
+            .get(CLAUDE_CONFIG_FILE)
+            .cloned()
+            .unwrap_or_else(|| "{}".to_string());
+        let mut config: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+
+        let mut mcp_servers = config
+            .get("mcpServers")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+
+        for cmd in &mcp.commands {
+            mcp_servers.insert(
+                cmd.name.clone(),
+                serde_json::json!({
+                    "type": "stdio",
+                    "command": cmd.command,
+                    "args": cmd.args,
+                    "env": cmd.env,
+                }),
+            );
+        }
+        for srv in &mcp.servers {
+            let mut entry = serde_json::json!({
+                "type": "sse",
+                "url": srv.url,
+            });
+            if !srv.headers.is_empty() {
+                entry["headers"] = serde_json::json!(srv.headers);
+            }
+            mcp_servers.insert(srv.name.clone(), entry);
+        }
+
+        config["mcpServers"] = serde_json::Value::Object(mcp_servers);
+        files.insert(
+            CLAUDE_CONFIG_FILE.to_string(),
+            serde_json::to_string_pretty(&config).expect("valid json value"),
+        );
         files
     }
 
@@ -301,5 +352,136 @@ mod tests {
         files.insert("other.json".to_string(), "content".to_string());
         let result = ClaudeAgent.skip_onboarding(files);
         assert_eq!(result["other.json"], "content");
+    }
+
+    // set_mcp_servers
+
+    fn make_mcp_command(name: &str, command: &str) -> kdn_workspace_configuration::McpCommand {
+        kdn_workspace_configuration::McpCommand {
+            name: name.to_string(),
+            command: command.to_string(),
+            args: vec![],
+            env: Default::default(),
+        }
+    }
+
+    fn make_mcp_server(name: &str, url: &str) -> kdn_workspace_configuration::McpServer {
+        kdn_workspace_configuration::McpServer {
+            name: name.to_string(),
+            url: url.to_string(),
+            headers: Default::default(),
+        }
+    }
+
+    fn make_mcp(
+        commands: Vec<kdn_workspace_configuration::McpCommand>,
+        servers: Vec<kdn_workspace_configuration::McpServer>,
+    ) -> kdn_workspace_configuration::McpConfiguration {
+        kdn_workspace_configuration::McpConfiguration { commands, servers }
+    }
+
+    #[test]
+    fn set_mcp_servers_with_none_returns_files_unchanged() {
+        let mut files = HashMap::new();
+        files.insert("other.json".to_string(), "content".to_string());
+        let result = ClaudeAgent.set_mcp_servers(files.clone(), None);
+        assert_eq!(result, files);
+    }
+
+    #[test]
+    fn set_mcp_servers_with_command_writes_stdio_entry() {
+        let mcp = make_mcp(vec![make_mcp_command("my-server", "npx")], vec![]);
+        let result = ClaudeAgent.set_mcp_servers(HashMap::new(), Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["mcpServers"]["my-server"]["type"], "stdio");
+        assert_eq!(json["mcpServers"]["my-server"]["command"], "npx");
+    }
+
+    #[test]
+    fn set_mcp_servers_with_command_writes_args_and_env() {
+        let mut cmd = make_mcp_command("srv", "node");
+        cmd.args = vec!["server.js".to_string()];
+        cmd.env.insert("TOKEN".to_string(), "abc".to_string());
+        let mcp = make_mcp(vec![cmd], vec![]);
+        let result = ClaudeAgent.set_mcp_servers(HashMap::new(), Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["mcpServers"]["srv"]["args"][0], "server.js");
+        assert_eq!(json["mcpServers"]["srv"]["env"]["TOKEN"], "abc");
+    }
+
+    #[test]
+    fn set_mcp_servers_with_server_writes_sse_entry() {
+        let mcp = make_mcp(
+            vec![],
+            vec![make_mcp_server("remote", "https://mcp.example.com")],
+        );
+        let result = ClaudeAgent.set_mcp_servers(HashMap::new(), Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["mcpServers"]["remote"]["type"], "sse");
+        assert_eq!(
+            json["mcpServers"]["remote"]["url"],
+            "https://mcp.example.com"
+        );
+    }
+
+    #[test]
+    fn set_mcp_servers_with_server_omits_headers_when_empty() {
+        let mcp = make_mcp(
+            vec![],
+            vec![make_mcp_server("remote", "https://mcp.example.com")],
+        );
+        let result = ClaudeAgent.set_mcp_servers(HashMap::new(), Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert!(json["mcpServers"]["remote"]["headers"].is_null());
+    }
+
+    #[test]
+    fn set_mcp_servers_with_server_writes_headers_when_present() {
+        let mut srv = make_mcp_server("remote", "https://mcp.example.com");
+        srv.headers
+            .insert("Authorization".to_string(), "Bearer tok".to_string());
+        let mcp = make_mcp(vec![], vec![srv]);
+        let result = ClaudeAgent.set_mcp_servers(HashMap::new(), Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(
+            json["mcpServers"]["remote"]["headers"]["Authorization"],
+            "Bearer tok"
+        );
+    }
+
+    #[test]
+    fn set_mcp_servers_preserves_existing_claude_json_fields() {
+        let mut files = HashMap::new();
+        files.insert(
+            CLAUDE_CONFIG_FILE.to_string(),
+            r#"{"hasCompletedOnboarding": true}"#.to_string(),
+        );
+        let mcp = make_mcp(vec![make_mcp_command("s", "cmd")], vec![]);
+        let result = ClaudeAgent.set_mcp_servers(files, Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert_eq!(json["hasCompletedOnboarding"], true);
+        assert!(json["mcpServers"]["s"].is_object());
+    }
+
+    #[test]
+    fn set_mcp_servers_merges_with_existing_mcp_servers() {
+        let mut files = HashMap::new();
+        files.insert(
+            CLAUDE_CONFIG_FILE.to_string(),
+            r#"{"mcpServers": {"existing": {"type": "sse", "url": "https://old.example.com"}}}"#
+                .to_string(),
+        );
+        let mcp = make_mcp(vec![make_mcp_command("new-srv", "npx")], vec![]);
+        let result = ClaudeAgent.set_mcp_servers(files, Some(&mcp));
+        let json: serde_json::Value =
+            serde_json::from_str(result[CLAUDE_CONFIG_FILE].as_str()).unwrap();
+        assert!(json["mcpServers"]["existing"].is_object());
+        assert!(json["mcpServers"]["new-srv"].is_object());
     }
 }

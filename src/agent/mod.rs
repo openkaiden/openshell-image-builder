@@ -53,6 +53,15 @@ pub trait Agent {
     ) -> HashMap<String, String> {
         files
     }
+    /// Merges MCP server configuration into `files` and returns the result.
+    /// If `mcp` is `None`, returns `files` unchanged.
+    fn set_mcp_servers(
+        &self,
+        files: HashMap<String, String>,
+        _mcp: Option<&kdn_workspace_configuration::McpConfiguration>,
+    ) -> HashMap<String, String> {
+        files
+    }
     /// Returns environment variables to bake into the image for this agent.
     /// `endpoint` overrides the inference provider's default URL when `Some`.
     /// `model` sets the default model when `Some`.
