@@ -16,6 +16,7 @@ The existing flags are the canonical reference:
 - `--agent` / `--inference` — enum flags backed by `ValueEnum`, gated by a compatibility check in `run()`
 - `--endpoint` — `Option<String>` that overrides a provider URL, validated early in `run()`, flows into `resolve_base_url()` and `stage_agent_settings()`
 - `--model` — `Option<String>` threaded through `stage_agent_settings()` and `agent.env_vars()`
+- `--ssl-certs` — `Option<String>` with `num_args = 0..=1` and `default_missing_value = ""` (optional value flag); converted to `Option<Option<PathBuf>>` before being passed to `run()`
 
 ## Step 1 — declare the argument in the `Cli` struct (`src/main.rs`)
 
@@ -46,6 +47,7 @@ Then extend the `run()` signature:
 fn run(
     ...
     my_flag: Option<&str>,   // add here
+    ssl_certs: Option<Option<PathBuf>>,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
 ```
@@ -108,6 +110,7 @@ fn run_with_my_flag_succeeds() {
         None,        // endpoint
         None,        // model
         Some("my-value"),  // my_flag
+        None,        // ssl_certs
         &FakeRunner(0),
     );
     assert!(result.is_ok(), "expected Ok, got {result:?}");
