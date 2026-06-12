@@ -1188,6 +1188,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stage_agent_settings_opencode_with_mcp_command_writes_local_entry_to_config() {
+        let context = tempfile::tempdir().unwrap();
+        let mcp = kdn_workspace_configuration::McpConfiguration {
+            commands: vec![kdn_workspace_configuration::McpCommand {
+                name: "playwright".to_string(),
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@playwright/mcp@latest".to_string()],
+                env: Default::default(),
+            }],
+            servers: vec![],
+        };
+        stage_agent_settings(
+            &agent::OpencodeAgent,
+            None,
+            Some(&inference::InferenceKind::Anthropic),
+            None,
+            Some("claude-opus-4-5"),
+            Some(&mcp),
+            context.path(),
+        )
+        .unwrap();
+        let content = std::fs::read_to_string(
+            context
+                .path()
+                .join("agent-settings")
+                .join(".config")
+                .join("opencode")
+                .join("config.json"),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["mcp"]["playwright"]["type"], "local");
+        assert_eq!(json["mcp"]["playwright"]["command"][0], "npx");
+        assert_eq!(json["mcp"]["playwright"]["enabled"], true);
+    }
+
     // parse_workspace_host
 
     #[test]
