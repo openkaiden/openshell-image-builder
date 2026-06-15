@@ -96,8 +96,9 @@ impl Agent for OpencodeAgent {
         let content = files.get(OPENCODE_CONFIG_FILE).cloned().unwrap_or_else(|| {
             serde_json::json!({ "$schema": "https://opencode.ai/config.json" }).to_string()
         });
-        let mut config: serde_json::Value =
-            serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        let mut config: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(
+            |_| serde_json::json!({ "$schema": "https://opencode.ai/config.json" }),
+        );
 
         let mut mcp_map = config
             .get("mcp")
