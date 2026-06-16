@@ -506,7 +506,7 @@ openshell-image-builder [OPTIONS] <TAG>
 
 ### Claude Code agent + Anthropic models provider
 
-```
+```sh
 $ openshell-image-builder \
   --agent claude \
   --inference anthropic \
@@ -525,11 +525,21 @@ $ openshell sandbox create \
   --name claude_anthropic_sandbox \
   --no-auto-providers \
   -- claude
+
+# Or, with podman driver, you can mount the files
+# (https://docs.nvidia.com/openshell/reference/sandbox-compute-drivers#podman-driver-config-mounts)
+$ openshell sandbox create \
+  --from sandbox_image:claude_anthropic \
+  --provider claude_anthropic_provider \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
+  --name claude_anthropic_sandbox \
+  --no-auto-providers \
+  -- claude
 ```
 
 ### OpenCode agent + Anthropic models provider
 
-```
+```sh
 $ openshell-image-builder \
   --agent opencode \
   --inference anthropic \
@@ -548,11 +558,21 @@ $ openshell sandbox create \
   --name opencode_anthropic_sandbox \
   --no-auto-providers \
   -- opencode
+
+# Or, with podman driver, you can mount the files
+# (https://docs.nvidia.com/openshell/reference/sandbox-compute-drivers#podman-driver-config-mounts)
+$ openshell sandbox create \
+  --from sandbox_image:opencode_anthropic \
+  --provider opencode_anthropic_provider \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
+  --name opencode_anthropic_sandbox \
+  --no-auto-providers \
+  -- opencode
 ```
 
 ### Claude Code agent + Vertex AI models provider
 
-```
+```sh
 $ openshell-image-builder \
   --agent claude \
   --inference vertexai \
@@ -560,33 +580,24 @@ $ openshell-image-builder \
   sandbox_image:claude_vertexai
 
 # change value of ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
+# also change source paths for mounts
+# NOTE: gcloud credentials are not protected with this method
 $ openshell sandbox create \
   --from sandbox_image:claude_vertexai \
-  --upload . \
+  --env CLAUDE_CODE_USE_VERTEX=1 \
+  --env ANTHROPIC_VERTEX_PROJECT_ID=my-gcp-project \
+  --env CLOUD_ML_REGION=global \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false},{"type":"bind","source":"/path/to/.config/gcloud/application_default_credentials.json","target":"/sandbox/.config/gcloud/application_default_credentials.json","read_only":true}]}}' \
   --name claude_vertexai_sandbox \
   --no-auto-providers \
-  --no-tty \
-  -- bash -c '(\
-    echo export CLAUDE_CODE_USE_VERTEX=1; \
-    echo export ANTHROPIC_VERTEX_PROJECT_ID=my-gcp-project; \
-    echo export CLOUD_ML_REGION=global \
-  ) >> /sandbox/.bashrc'
-
-$ openshell sandbox upload \
-  claude_vertexai_sandbox \
-  $HOME/.config/gcloud/application_default_credentials.json \
-  /sandbox/.config/gcloud/application_default_credentials.json
-
-$ openshell sandbox connect claude_vertexai_sandbox
-
-sandbox:~$ claude
+  -- claude
 ```
 
 ### OpenCode agent + Ollama (local models)
 
 Ollama must be running on the host before starting the sandbox.
 
-```
+```sh
 $ openshell-image-builder \
   --agent opencode \
   --inference ollama \
@@ -596,6 +607,15 @@ $ openshell-image-builder \
 $ openshell sandbox create \
   --from sandbox_image:opencode_ollama \
   --upload . \
+  --name opencode_ollama_sandbox \
+  --no-auto-providers \
+  -- opencode
+
+# Or, with podman driver, you can mount the files
+# (https://docs.nvidia.com/openshell/reference/sandbox-compute-drivers#podman-driver-config-mounts)
+$ openshell sandbox create \
+  --from sandbox_image:opencode_ollama \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
   --name opencode_ollama_sandbox \
   --no-auto-providers \
   -- opencode
@@ -622,6 +642,16 @@ $ openshell sandbox create \
   --name opencode_openai_sandbox \
   --no-auto-providers \
   -- opencode
+
+# Or, with podman driver, you can mount the files
+# (https://docs.nvidia.com/openshell/reference/sandbox-compute-drivers#podman-driver-config-mounts)
+$ openshell sandbox create \
+  --from sandbox_image:opencode_openai \
+  --provider opencode_openai_provider \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
+  --name opencode_openai_sandbox \
+  --no-auto-providers \
+  -- opencode
 ```
 
 To use an OpenAI-compatible endpoint (e.g. Azure OpenAI, a local proxy, or another provider's API):
@@ -637,7 +667,7 @@ $ openshell-image-builder \
 
 ### OpenCode agent + Vertex AI models provider
 
-```
+```sh
 $ openshell-image-builder \
   --agent opencode \
   --inference vertexai \
@@ -645,26 +675,17 @@ $ openshell-image-builder \
   sandbox_image:opencode_vertexai
 
 # change value of GOOGLE_CLOUD_PROJECT and VERTEX_LOCATION
+# also change source paths for mounts
+# NOTE: gcloud credentials are not protected with this method
 $ openshell sandbox create \
   --from sandbox_image:opencode_vertexai \
-  --upload . \
+  --env GOOGLE_APPLICATION_CREDENTIALS=/sandbox/.config/gcloud/application_default_credentials.json \
+  --env GOOGLE_CLOUD_PROJECT=my-gcp-project \
+  --env VERTEX_LOCATION=global \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false},{"type":"bind","source":"/path/to/.config/gcloud/application_default_credentials.json","target":"/sandbox/.config/gcloud/application_default_credentials.json","read_only":true}]}}' \
   --name opencode_vertexai_sandbox \
   --no-auto-providers \
-  --no-tty \
-  -- bash -c '(\
-    echo export GOOGLE_CLOUD_PROJECT=my-gcp-project; \
-    echo export VERTEX_LOCATION=global; \
-    echo export GOOGLE_APPLICATION_CREDENTIALS=/sandbox/.config/gcloud/application_default_credentials.json \
-  ) >> /sandbox/.bashrc'
-
-$ openshell sandbox upload \
-  opencode_vertexai_sandbox \
-  $HOME/.config/gcloud/application_default_credentials.json \
-  /sandbox/.config/gcloud/application_default_credentials.json
-
-$ openshell sandbox connect opencode_vertexai_sandbox
-
-sandbox:~$ opencode
+  -- opencode
 
 # select a model with /models
 ```
