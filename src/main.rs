@@ -432,7 +432,7 @@ mod tests {
                 .collect();
             if let Some(idx) = args.iter().position(|a| a == "-f") {
                 if let Some(path) = args.get(idx + 1) {
-                    *self.0.lock().unwrap() = std::fs::read_to_string(path).unwrap_or_default();
+                    *self.0.lock().unwrap() = std::fs::read_to_string(path)?;
                 }
             }
             Ok(Command::new("sh").args(["-c", "exit 0"]).status()?)
