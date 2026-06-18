@@ -72,13 +72,17 @@ struct Cli {
     #[arg(
         long = "ssl-certs",
         value_name = "FILE",
-        num_args = 0..=1,
-        default_missing_value = "",
-        help = "Copy system CA certificates into the build context and install them \
-                in the final image. Without FILE, auto-discovers from common system \
-                paths. With FILE, uses that specific bundle (fails if not found)."
+        conflicts_with = "disable_ssl_certs",
+        help = "Use a specific CA bundle instead of the auto-discovered one. \
+                The build fails immediately if the file does not exist."
     )]
     ssl_certs: Option<String>,
+    #[arg(
+        long = "disable-ssl-certs",
+        action = clap::ArgAction::SetTrue,
+        help = "Disable bundling CA certificates into the image."
+    )]
+    disable_ssl_certs: bool,
 }
 
 fn main() {
@@ -91,13 +95,11 @@ fn main() {
         _ => LevelFilter::Debug,
     };
     env_logger::Builder::new().filter_level(log_level).init();
-    let ssl_certs = cli.ssl_certs.map(|s| {
-        if s.is_empty() {
-            None
-        } else {
-            Some(std::path::PathBuf::from(s))
-        }
-    });
+    let ssl_certs = if cli.disable_ssl_certs {
+        None
+    } else {
+        Some(cli.ssl_certs.map(std::path::PathBuf::from))
+    };
     if let Err(e) = run(
         &cli.tag,
         cli.config,
@@ -1371,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn run_without_ssl_certs_containerfile_has_no_cert_copy() {
+    fn run_with_disable_ssl_certs_containerfile_has_no_cert_copy() {
         let tmp = tempfile::tempdir().unwrap();
         let capture = ContainerfileCapture(std::sync::Mutex::new(String::new()));
         run(
@@ -1390,7 +1392,7 @@ mod tests {
         let cf = capture.0.into_inner().unwrap();
         assert!(
             !cf.contains("COPY certs/"),
-            "Containerfile must not contain cert COPY when --ssl-certs is not passed"
+            "Containerfile must not contain cert COPY when --disable-ssl-certs is passed"
         );
     }
 }

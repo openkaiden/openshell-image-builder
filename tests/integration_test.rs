@@ -115,6 +115,8 @@ static UBUNTU_OPENCODE_OPENAI_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_NO_POLICY_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_SSL_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_SSL_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_NO_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_NO_CERTS_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn ssl_cert_fixture_path() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-ca.crt")
@@ -143,6 +145,29 @@ fn fedora_ssl_certs_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--ssl-certs",
                 cert_str,
+            ],
+        )
+    })
+}
+
+fn ubuntu_no_certs_image() -> &'static str {
+    UBUNTU_NO_CERTS_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-no-certs:integration",
+            &["--disable-ssl-certs"],
+        )
+    })
+}
+
+fn fedora_no_certs_image() -> &'static str {
+    FEDORA_NO_CERTS_IMAGE.get_or_init(|| {
+        let config = fedora_config_dir();
+        build_image(
+            "openshell-test-fedora-no-certs:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--disable-ssl-certs",
             ],
         )
     })
@@ -2656,14 +2681,14 @@ mod ssl_certs {
 
     #[test]
     #[ignore]
-    fn ubuntu_cert_absent_without_flag() {
+    fn ubuntu_cert_absent_with_disable_flag() {
         let out = run_in_image(
-            ubuntu_image(),
+            ubuntu_no_certs_image(),
             "test -f /usr/local/share/ca-certificates/system-ca.crt",
         );
         assert!(
             !out.status.success(),
-            "system-ca.crt should not be present in image built without --ssl-certs"
+            "system-ca.crt should not be present in image built with --disable-ssl-certs"
         );
     }
 
@@ -2695,14 +2720,14 @@ mod ssl_certs {
 
     #[test]
     #[ignore]
-    fn fedora_cert_absent_without_flag() {
+    fn fedora_cert_absent_with_disable_flag() {
         let out = run_in_image(
-            fedora_image(),
+            fedora_no_certs_image(),
             "test -f /etc/pki/ca-trust/source/anchors/system-ca.crt",
         );
         assert!(
             !out.status.success(),
-            "system-ca.crt should not be present in image built without --ssl-certs"
+            "system-ca.crt should not be present in image built with --disable-ssl-certs"
         );
     }
 }
@@ -2770,6 +2795,8 @@ fn cleanup_images() {
         "openshell-test-ubuntu-no-policy:integration",
         "openshell-test-ubuntu-ssl-certs:integration",
         "openshell-test-fedora-ssl-certs:integration",
+        "openshell-test-ubuntu-no-certs:integration",
+        "openshell-test-fedora-no-certs:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
