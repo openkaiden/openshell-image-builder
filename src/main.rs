@@ -66,6 +66,8 @@ struct Cli {
         help = "Read .kaiden/workspace.json and apply its features, skills, and network rules"
     )]
     with_workspace_config: bool,
+    #[arg(long, help = "Include OpenShell sandbox policy in the image")]
+    with_policy: bool,
 }
 
 fn main() {
@@ -86,6 +88,7 @@ fn main() {
         cli.inference,
         cli.endpoint.as_deref(),
         cli.model.as_deref(),
+        cli.with_policy,
         &build::PodmanRunner,
     ) {
         eprintln!("Error: {e}");
@@ -102,6 +105,7 @@ fn run(
     inference_kind: Option<inference::InferenceKind>,
     endpoint: Option<&str>,
     model: Option<&str>,
+    with_policy: bool,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
@@ -147,14 +151,16 @@ fn run(
         .unwrap_or_default();
     let base_url = resolve_base_url(inference_kind.as_ref(), endpoint);
     let skill_names = stage_skills(workspace.as_ref(), agent.as_deref(), context_dir.path())?;
-    let policy_yaml = build_policy(
-        BASE_POLICY_YAML,
-        agent.as_deref(),
-        inference.as_deref(),
-        base_url.as_deref(),
-        workspace.as_ref(),
-    )?;
-    std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
+    if with_policy {
+        let policy_yaml = build_policy(
+            BASE_POLICY_YAML,
+            agent.as_deref(),
+            inference.as_deref(),
+            base_url.as_deref(),
+            workspace.as_ref(),
+        )?;
+        std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
+    }
     let output = containerfile::generate(
         &config,
         agent.as_deref(),
@@ -162,6 +168,7 @@ fn run(
         has_agent_settings,
         &skill_names,
         &agent_env_vars,
+        with_policy,
     )?;
     build::build(&output, tag, runner, context_dir.path())?;
     Ok(())
@@ -807,6 +814,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -823,6 +831,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -839,6 +848,7 @@ mod tests {
             Some(inference::InferenceKind::Anthropic),
             None,
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -855,6 +865,7 @@ mod tests {
             Some(inference::InferenceKind::Ollama),
             None,
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -877,6 +888,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             &FakeRunner(1),
         );
         assert!(result.is_err());
@@ -893,6 +905,7 @@ mod tests {
             Some(inference::InferenceKind::VertexAi),
             Some("https://my-vertex-proxy.example.com"),
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -915,6 +928,7 @@ mod tests {
             Some(inference::InferenceKind::Anthropic),
             None,
             Some("claude-opus-4-5"),
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1063,6 +1077,23 @@ mod tests {
     }
 
     #[test]
+    fn run_with_policy_flag_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            true,
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
     fn run_with_claude_agent_and_openai_inference_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         let result = run(
@@ -1073,6 +1104,7 @@ mod tests {
             Some(inference::InferenceKind::OpenAi),
             None,
             None,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_err());

@@ -15,7 +15,7 @@ The tool assembles the image in layers — base image, agent installation, agent
    - **Inference settings** (`--inference`) — inference provider definition is added to settings files.
    - **Endpoint override** (`--endpoint`) — optional custom URL for inference provider is set in inference provider definition.
    - **Model** (`--model`) — default model is baked into the agent's settings files.
-4. **OpenShell policy** — `/etc/openshell/policy.yaml` shipped with every image.
+4. **OpenShell policy** (`--with-policy`) — `/etc/openshell/policy.yaml` copied into the image only when `--with-policy` is passed.
    - **Base policy** — Git operations over HTTPS and the GitHub REST API.
    - **Agent network rules** — agent-specific endpoints are added by `--agent`.
    - **Inference network rules** — LLM backend endpoints are added by `--inference`.
@@ -332,10 +332,14 @@ When `--model` is also given, the top-level `"model"` field is added (as `"ollam
 
 ## Sandbox policy
 
-Every image built by this tool includes `/etc/openshell/policy.yaml`. This file is read by the OpenShell runtime and defines the sandbox security policy for the container:
+Pass `--with-policy` to include `/etc/openshell/policy.yaml` in the image. Without this flag, no policy file is written and the image contains no OpenShell policy. The policy file is read by the OpenShell runtime and defines the sandbox security policy for the container:
 
 - **Filesystem policy** — which paths are read-only, read-write, or inaccessible to the `sandbox` user.
 - **Network policies** — which binaries are allowed to connect to which hosts and ports.
+
+```sh
+openshell-image-builder --agent claude --inference anthropic --with-policy myimage:latest
+```
 
 The policy is built in four layers, merged in order:
 
@@ -501,6 +505,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--endpoint <URL>`             | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
 | `--model <MODEL>`              | Default model for the agent to use (see [Default model](#default-model---model)) |
 | `--with-workspace-config`      | Read `.kaiden/workspace.json` and apply its features, skills, and network rules |
+| `--with-policy`                | Include OpenShell sandbox policy (`/etc/openshell/policy.yaml`) in the image   |
 | `-v` / `-vv`                   | Increase log verbosity (info / debug)                              |
 
 ## Examples

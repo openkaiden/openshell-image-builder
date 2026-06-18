@@ -112,6 +112,7 @@ static FEDORA_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static HUMMINGBIRD_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_OPENAI_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_NO_POLICY_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -172,14 +173,21 @@ fn ubuntu_opencode_settings_image() -> &'static str {
 }
 
 fn ubuntu_image() -> &'static str {
-    UBUNTU_IMAGE.get_or_init(|| build_image("openshell-test-ubuntu:integration", &[]))
+    UBUNTU_IMAGE
+        .get_or_init(|| build_image("openshell-test-ubuntu:integration", &["--with-policy"]))
 }
 
 fn ubuntu_claude_image() -> &'static str {
     UBUNTU_CLAUDE_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-claude:integration",
-            &["--agent", "claude", "--inference", "anthropic"],
+            &[
+                "--agent",
+                "claude",
+                "--inference",
+                "anthropic",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -189,7 +197,7 @@ fn fedora_image() -> &'static str {
         let config = fedora_config_dir();
         build_image(
             "openshell-test-fedora:integration",
-            &["--config", config.path().to_str().unwrap()],
+            &["--config", config.path().to_str().unwrap(), "--with-policy"],
         )
     })
 }
@@ -206,6 +214,7 @@ fn fedora_claude_image() -> &'static str {
                 "claude",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -215,7 +224,13 @@ fn ubuntu_opencode_image() -> &'static str {
     UBUNTU_OPENCODE_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-opencode:integration",
-            &["--agent", "opencode", "--inference", "anthropic"],
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "anthropic",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -232,6 +247,7 @@ fn fedora_opencode_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -241,7 +257,13 @@ fn ubuntu_claude_vertexai_image() -> &'static str {
     UBUNTU_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-claude-vertexai:integration",
-            &["--agent", "claude", "--inference", "vertexai"],
+            &[
+                "--agent",
+                "claude",
+                "--inference",
+                "vertexai",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -250,7 +272,13 @@ fn ubuntu_opencode_vertexai_image() -> &'static str {
     UBUNTU_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-opencode-vertexai:integration",
-            &["--agent", "opencode", "--inference", "vertexai"],
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "vertexai",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -267,6 +295,7 @@ fn fedora_claude_vertexai_image() -> &'static str {
                 "claude",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -284,6 +313,7 @@ fn fedora_opencode_vertexai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -294,7 +324,7 @@ fn ubi_image() -> &'static str {
         let config = ubi_config_dir();
         build_image(
             "openshell-test-ubi:integration",
-            &["--config", config.path().to_str().unwrap()],
+            &["--config", config.path().to_str().unwrap(), "--with-policy"],
         )
     })
 }
@@ -311,6 +341,7 @@ fn ubi_claude_image() -> &'static str {
                 "claude",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -328,6 +359,7 @@ fn ubi_opencode_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -345,6 +377,7 @@ fn ubi_claude_vertexai_image() -> &'static str {
                 "claude",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -362,6 +395,7 @@ fn ubi_opencode_vertexai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -372,7 +406,7 @@ fn hummingbird_image() -> &'static str {
         let config = hummingbird_config_dir();
         build_image(
             "openshell-test-hummingbird:integration",
-            &["--config", config.path().to_str().unwrap()],
+            &["--config", config.path().to_str().unwrap(), "--with-policy"],
         )
     })
 }
@@ -389,6 +423,7 @@ fn hummingbird_claude_image() -> &'static str {
                 "claude",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -406,6 +441,7 @@ fn hummingbird_opencode_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "anthropic",
+                "--with-policy",
             ],
         )
     })
@@ -423,6 +459,7 @@ fn hummingbird_claude_vertexai_image() -> &'static str {
                 "claude",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -440,6 +477,7 @@ fn hummingbird_opencode_vertexai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "vertexai",
+                "--with-policy",
             ],
         )
     })
@@ -1104,7 +1142,7 @@ fn no_workspace_config_network_hosts_ubuntu_image() -> &'static str {
         build_image_in_workspace_dir(
             "openshell-test-no-workspace-config-network-hosts-ubuntu:integration",
             NETWORK_HOSTS_WORKSPACE,
-            &[],
+            &["--with-policy"],
         )
     })
 }
@@ -1113,7 +1151,13 @@ fn ubuntu_opencode_ollama_image() -> &'static str {
     UBUNTU_OPENCODE_OLLAMA_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-opencode-ollama:integration",
-            &["--agent", "opencode", "--inference", "ollama"],
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "ollama",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -1130,6 +1174,7 @@ fn fedora_opencode_ollama_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "ollama",
+                "--with-policy",
             ],
         )
     })
@@ -1147,6 +1192,7 @@ fn ubi_opencode_ollama_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "ollama",
+                "--with-policy",
             ],
         )
     })
@@ -1164,6 +1210,7 @@ fn hummingbird_opencode_ollama_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "ollama",
+                "--with-policy",
             ],
         )
     })
@@ -1173,7 +1220,13 @@ fn ubuntu_opencode_openai_image() -> &'static str {
     UBUNTU_OPENCODE_OPENAI_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-opencode-openai:integration",
-            &["--agent", "opencode", "--inference", "openai"],
+            &[
+                "--agent",
+                "opencode",
+                "--inference",
+                "openai",
+                "--with-policy",
+            ],
         )
     })
 }
@@ -1190,6 +1243,7 @@ fn fedora_opencode_openai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "openai",
+                "--with-policy",
             ],
         )
     })
@@ -1207,6 +1261,7 @@ fn ubi_opencode_openai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "openai",
+                "--with-policy",
             ],
         )
     })
@@ -1224,6 +1279,7 @@ fn hummingbird_opencode_openai_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "openai",
+                "--with-policy",
             ],
         )
     })
@@ -1243,6 +1299,11 @@ fn ubuntu_opencode_openai_model_image() -> &'static str {
             ],
         )
     })
+}
+
+fn ubuntu_no_policy_image() -> &'static str {
+    UBUNTU_NO_POLICY_IMAGE
+        .get_or_init(|| build_image("openshell-test-ubuntu-no-policy:integration", &[]))
 }
 
 // ---------------------------------------------------------------------------
@@ -2285,6 +2346,7 @@ fn ubuntu_claude_anthropic_endpoint_image() -> &'static str {
                 "anthropic",
                 "--endpoint",
                 ANTHROPIC_PROXY_URL,
+                "--with-policy",
             ],
         )
     })
@@ -2301,6 +2363,7 @@ fn ubuntu_opencode_anthropic_endpoint_image() -> &'static str {
                 "anthropic",
                 "--endpoint",
                 ANTHROPIC_PROXY_URL,
+                "--with-policy",
             ],
         )
     })
@@ -2317,6 +2380,7 @@ fn ubuntu_opencode_ollama_custom_endpoint_image() -> &'static str {
                 "ollama",
                 "--endpoint",
                 OLLAMA_CUSTOM_ENDPOINT,
+                "--with-policy",
             ],
         )
     })
@@ -2493,6 +2557,37 @@ mod endpoint_rejection {
 }
 
 // ---------------------------------------------------------------------------
+// --with-policy flag tests
+// ---------------------------------------------------------------------------
+
+mod with_policy {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn policy_yaml_present_when_flag_set() {
+        let out = run_in_image(ubuntu_image(), "test -f /etc/openshell/policy.yaml");
+        assert!(
+            out.status.success(),
+            "policy.yaml not found in /etc/openshell/ when --with-policy was passed"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn policy_yaml_absent_without_flag() {
+        let out = run_in_image(
+            ubuntu_no_policy_image(),
+            "test ! -f /etc/openshell/policy.yaml",
+        );
+        assert!(
+            out.status.success(),
+            "policy.yaml found in /etc/openshell/ even though --with-policy was not passed"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -2552,6 +2647,7 @@ fn cleanup_images() {
         "openshell-test-no-workspace-config-claude-skills-ubuntu:integration",
         "openshell-test-no-workspace-config-opencode-skills-ubuntu:integration",
         "openshell-test-no-workspace-config-network-hosts-ubuntu:integration",
+        "openshell-test-ubuntu-no-policy:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
