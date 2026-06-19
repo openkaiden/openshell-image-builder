@@ -158,6 +158,66 @@ Use `-v` (info) or `-vv` (debug) to increase log verbosity — useful for tracin
 openshell-image-builder -v myimage:latest
 ```
 
+## Enterprise environments
+
+### Corporate proxy support (`--ssl-certs`)
+
+In environments where outbound HTTPS traffic is intercepted by a corporate proxy (e.g. Netskope, Zscaler, or a custom MITM proxy), `dnf install` and `apt-get install` fail during the build because the proxy presents a self-signed or corporate-issued certificate that the container doesn't trust.
+
+By default, the tool auto-discovers the host's CA bundle and copies it into the build context, installing it in the image. The certificate is trusted both **during the build** (so package installation succeeds) and **at runtime** (so the agent can reach its LLM backend through the same proxy).
+
+**Auto-discover (default)** — the tool searches for a CA bundle in common system locations and uses the first one it finds:
+
+| Distribution | Path |
+| ------------ | ---- |
+| Debian / Ubuntu / Gentoo | `/etc/ssl/certs/ca-certificates.crt` |
+| Fedora / RHEL 6 | `/etc/pki/tls/certs/ca-bundle.crt` |
+| Fedora / RHEL 7+ / CentOS / Rocky / Alma | `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` |
+| OpenSUSE | `/etc/ssl/ca-bundle.pem` |
+| SUSE / older | `/etc/ssl/certs/ca-bundle.crt` |
+| Alpine | `/etc/ssl/cert.pem` |
+| Arch | `/etc/ca-certificates/extracted/tls-ca-bundle.pem` |
+
+If none of the above paths exist, the build proceeds without adding any certificates.
+
+**Explicit file** — point directly to a specific CA bundle with `--ssl-certs`. The build fails immediately if the file does not exist:
+
+```sh
+openshell-image-builder --ssl-certs /etc/pki/tls/certs/ca-bundle.crt myimage:latest
+```
+
+**Disable** — pass `--disable-ssl-certs` to skip certificate bundling entirely:
+
+```sh
+openshell-image-builder --disable-ssl-certs myimage:latest
+```
+
+#### How it works
+
+The CA bundle is copied into the build context and installed in the image's system trust store during the `system` stage, before any packages are installed:
+
+- **Fedora / UBI / Hummingbird** — copied to `/etc/pki/ca-trust/source/anchors/system-ca.crt`, then `update-ca-trust` is run before `dnf install`.
+- **Ubuntu** — copied to `/usr/local/share/ca-certificates/system-ca.crt`, then `update-ca-certificates` is run after `apt-get install` (Ubuntu mirrors use HTTP, so the cert is not needed for package installation itself, but is available to the agent at runtime).
+
+Because the `final` image stage inherits the full filesystem from `system`, the CA bundle and updated trust database are present in the running sandbox.
+
+#### Example — agent build behind a corporate proxy
+
+```sh
+# Auto-discover the host CA bundle and build with Claude Code (default behaviour)
+openshell-image-builder \
+  --agent claude \
+  --inference anthropic \
+  myimage:latest
+
+# Point to a specific bundle instead
+openshell-image-builder \
+  --ssl-certs /usr/local/share/ca-certificates/my-corp-ca.crt \
+  --agent claude \
+  --inference anthropic \
+  myimage:latest
+```
+
 ## Installing an agent
 
 Pass `--agent` to install an agent into the image.
@@ -506,6 +566,8 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--model <MODEL>`              | Default model for the agent to use (see [Default model](#default-model---model)) |
 | `--with-workspace-config`      | Read `.kaiden/workspace.json` and apply its features, skills, and network rules |
 | `--with-policy`                | Include OpenShell sandbox policy (`/etc/openshell/policy.yaml`) in the image   |
+| `--ssl-certs <FILE>`           | Use a specific CA bundle instead of the auto-discovered one (see [Corporate proxy support](#corporate-proxy-support---ssl-certs)). The build fails immediately if the file does not exist. |
+| `--disable-ssl-certs`          | Disable bundling CA certificates into the image. By default, the tool auto-discovers and includes system CA certificates. |
 | `-v` / `-vv`                   | Increase log verbosity (info / debug)                              |
 
 ## Examples

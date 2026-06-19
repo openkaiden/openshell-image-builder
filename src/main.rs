@@ -16,6 +16,7 @@
 
 mod agent;
 mod build;
+mod certs;
 mod config;
 mod containerfile;
 mod feature;
@@ -68,6 +69,20 @@ struct Cli {
     with_workspace_config: bool,
     #[arg(long, help = "Include OpenShell sandbox policy in the image")]
     with_policy: bool,
+    #[arg(
+        long = "ssl-certs",
+        value_name = "FILE",
+        conflicts_with = "disable_ssl_certs",
+        help = "Use a specific CA bundle instead of the auto-discovered one. \
+                The build fails immediately if the file does not exist."
+    )]
+    ssl_certs: Option<String>,
+    #[arg(
+        long = "disable-ssl-certs",
+        action = clap::ArgAction::SetTrue,
+        help = "Disable bundling CA certificates into the image."
+    )]
+    disable_ssl_certs: bool,
 }
 
 fn main() {
@@ -80,6 +95,11 @@ fn main() {
         _ => LevelFilter::Debug,
     };
     env_logger::Builder::new().filter_level(log_level).init();
+    let ssl_certs = if cli.disable_ssl_certs {
+        None
+    } else {
+        Some(cli.ssl_certs.map(std::path::PathBuf::from))
+    };
     if let Err(e) = run(
         &cli.tag,
         cli.config,
@@ -89,6 +109,7 @@ fn main() {
         cli.endpoint.as_deref(),
         cli.model.as_deref(),
         cli.with_policy,
+        ssl_certs,
         &build::PodmanRunner,
     ) {
         eprintln!("Error: {e}");
@@ -106,6 +127,7 @@ fn run(
     endpoint: Option<&str>,
     model: Option<&str>,
     with_policy: bool,
+    ssl_certs: Option<Option<PathBuf>>,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
@@ -161,6 +183,14 @@ fn run(
         )?;
         std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
     }
+    let ca_certs_copied = match ssl_certs {
+        None => false,
+        Some(None) => certs::copy_from_paths(context_dir.path(), certs::SYSTEM_CA_CERT_PATHS)?,
+        Some(Some(path)) => {
+            certs::copy_from_file(context_dir.path(), &path)?;
+            true
+        }
+    };
     let output = containerfile::generate(
         &config,
         agent.as_deref(),
@@ -169,6 +199,7 @@ fn run(
         &skill_names,
         &agent_env_vars,
         with_policy,
+        ca_certs_copied,
     )?;
     build::build(&output, tag, runner, context_dir.path())?;
     Ok(())
@@ -387,6 +418,24 @@ mod tests {
             Ok(Command::new("sh")
                 .args(["-c", &format!("exit {}", self.0)])
                 .status()?)
+        }
+    }
+
+    // Reads the Containerfile written to the `-f <path>` temp file and stores its content.
+    struct ContainerfileCapture(std::sync::Mutex<String>);
+
+    impl build::Runner for ContainerfileCapture {
+        fn run(&self, cmd: &mut Command) -> std::io::Result<ExitStatus> {
+            let args: Vec<_> = cmd
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            if let Some(idx) = args.iter().position(|a| a == "-f") {
+                if let Some(path) = args.get(idx + 1) {
+                    *self.0.lock().unwrap() = std::fs::read_to_string(path)?;
+                }
+            }
+            Ok(Command::new("sh").args(["-c", "exit 0"]).status()?)
         }
     }
 
@@ -815,6 +864,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -832,6 +882,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -849,6 +900,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -866,6 +918,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -889,6 +942,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(1),
         );
         assert!(result.is_err());
@@ -906,6 +960,7 @@ mod tests {
             Some("https://my-vertex-proxy.example.com"),
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -929,6 +984,7 @@ mod tests {
             None,
             Some("claude-opus-4-5"),
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1088,6 +1144,7 @@ mod tests {
             None,
             None,
             true,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1105,6 +1162,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -1254,5 +1312,87 @@ mod tests {
         let yaml_no_ws = build_policy(BASE_POLICY_YAML, None, None, None, None).unwrap();
         let yaml_ws = build_policy(BASE_POLICY_YAML, None, None, None, Some(&ws)).unwrap();
         assert_eq!(yaml_no_ws, yaml_ws);
+    }
+
+    // ssl_certs / run() tests
+
+    #[test]
+    fn run_with_ssl_certs_auto_discover_no_certs_found_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            Some(None),
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_with_ssl_certs_specific_file_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cert = tmp.path().join("bundle.crt");
+        std::fs::write(&cert, b"FAKE_CERT_DATA").unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            Some(Some(cert)),
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_with_ssl_certs_specific_file_missing_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            Some(Some(PathBuf::from("/nonexistent/bundle.crt"))),
+            &FakeRunner(0),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_with_disable_ssl_certs_containerfile_has_no_cert_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let capture = ContainerfileCapture(std::sync::Mutex::new(String::new()));
+        run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            &capture,
+        )
+        .unwrap();
+        let cf = capture.0.into_inner().unwrap();
+        assert!(
+            !cf.contains("COPY certs/"),
+            "Containerfile must not contain cert COPY when --disable-ssl-certs is passed"
+        );
     }
 }

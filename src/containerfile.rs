@@ -37,6 +37,7 @@ impl std::fmt::Display for ContainerfileError {
 
 impl std::error::Error for ContainerfileError {}
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate(
     config: &Config,
     agent: Option<&dyn Agent>,
@@ -45,6 +46,7 @@ pub fn generate(
     skill_names: &[String],
     env_vars: &HashMap<String, String>,
     with_policy: bool,
+    with_ca_certs: bool,
 ) -> Result<String, ContainerfileError> {
     let tag = &config.base_image.tag;
     let system_stage = match config.base_image.image.as_str() {
@@ -66,6 +68,7 @@ pub fn generate(
                 "traceroute",
                 "which",
             ],
+            with_ca_certs,
         ),
         "ubi" => dnf_system_stage(
             "registry.access.redhat.com/ubi10/ubi",
@@ -81,6 +84,7 @@ pub fn generate(
                 "procps-ng",
                 "which",
             ],
+            with_ca_certs,
         ),
         "hummingbird" => dnf_system_stage(
             "registry.access.redhat.com/hi/core-runtime",
@@ -93,8 +97,9 @@ pub fn generate(
                 "which",
                 "tar",
             ],
+            with_ca_certs,
         ),
-        "ubuntu" => ubuntu_system_stage(tag),
+        "ubuntu" => ubuntu_system_stage(tag, with_ca_certs),
         image => {
             return Err(ContainerfileError::NotSupported {
                 image: image.to_string(),
@@ -191,7 +196,12 @@ fn features_section(features: &[StagedFeature]) -> String {
     out
 }
 
-fn ubuntu_system_stage(tag: &str) -> String {
+fn ubuntu_system_stage(tag: &str, with_ca_certs: bool) -> String {
+    let ca_cert_section = if with_ca_certs {
+        "COPY certs/system-ca.crt /usr/local/share/ca-certificates/system-ca.crt\nRUN update-ca-certificates\n\n"
+    } else {
+        ""
+    };
     format!(
         r#"# System base
 FROM docker.io/library/ubuntu:{tag} AS system
@@ -216,18 +226,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         traceroute \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
+{ca_cert_section}RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
     groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox
 "#
     )
 }
 
-fn dnf_system_stage(base_image: &str, tag: &str, packages: &[&str]) -> String {
+fn dnf_system_stage(base_image: &str, tag: &str, packages: &[&str], with_ca_certs: bool) -> String {
     let pkg_lines = packages
         .iter()
         .map(|p| format!("        {p} \\"))
         .collect::<Vec<_>>()
         .join("\n");
+    let ca_cert_section = if with_ca_certs {
+        "COPY certs/system-ca.crt /etc/pki/ca-trust/source/anchors/system-ca.crt\nRUN update-ca-trust\n\n"
+    } else {
+        ""
+    };
     format!(
         r#"# System base
 FROM {base_image}:{tag} AS system
@@ -235,7 +250,7 @@ WORKDIR /sandbox
 
 # Core system dependencies
 USER 0
-RUN dnf install -y --setopt=install_weak_deps=False \
+{ca_cert_section}RUN dnf install -y --setopt=install_weak_deps=False \
 {pkg_lines}
     && dnf clean all
 
@@ -320,7 +335,12 @@ mod tests {
             skill_names,
             &HashMap::new(),
             with_policy,
+            false,
         )
+    }
+
+    fn build_cf_with_ca_certs(config: &Config) -> String {
+        generate(config, None, &[], false, &[], &HashMap::new(), false, true).unwrap()
     }
 
     fn ubuntu_config(tag: &str) -> Config {
@@ -985,8 +1005,17 @@ mod tests {
             "ANTHROPIC_BASE_URL".to_string(),
             "https://proxy.example.com".to_string(),
         );
-        let content =
-            generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars, false).unwrap();
+        let content = generate(
+            &ubuntu_config("24.04"),
+            None,
+            &[],
+            false,
+            &[],
+            &vars,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(content.contains("ENV ANTHROPIC_BASE_URL=\"https://proxy.example.com\""));
     }
 
@@ -997,8 +1026,17 @@ mod tests {
             "ANTHROPIC_BASE_URL".to_string(),
             "https://proxy.example.com".to_string(),
         );
-        let content =
-            generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars, false).unwrap();
+        let content = generate(
+            &ubuntu_config("24.04"),
+            None,
+            &[],
+            false,
+            &[],
+            &vars,
+            false,
+            false,
+        )
+        .unwrap();
         let user_pos = content.find("USER sandbox").unwrap();
         let env_pos = content.find("ENV ANTHROPIC_BASE_URL=").unwrap();
         assert!(
@@ -1019,10 +1057,98 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("Z_VAR".to_string(), "z".to_string());
         vars.insert("A_VAR".to_string(), "a".to_string());
-        let content =
-            generate(&ubuntu_config("24.04"), None, &[], false, &[], &vars, false).unwrap();
+        let content = generate(
+            &ubuntu_config("24.04"),
+            None,
+            &[],
+            false,
+            &[],
+            &vars,
+            false,
+            false,
+        )
+        .unwrap();
         let a_pos = content.find("ENV A_VAR=").unwrap();
         let z_pos = content.find("ENV Z_VAR=").unwrap();
         assert!(a_pos < z_pos, "env vars must be sorted alphabetically");
+    }
+
+    // CA cert tests
+
+    #[test]
+    fn ca_certs_omitted_when_false() {
+        for content in [
+            build_cf(&ubuntu_config("24.04"), None, &[], false, &[], false).unwrap(),
+            build_cf(&fedora_config(), None, &[], false, &[], false).unwrap(),
+            build_cf(&ubi_config(), None, &[], false, &[], false).unwrap(),
+            build_cf(&hummingbird_config(), None, &[], false, &[], false).unwrap(),
+        ] {
+            assert!(
+                !content.contains("COPY certs/"),
+                "unexpected cert COPY: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn dnf_ca_certs_included_when_true() {
+        for content in [
+            build_cf_with_ca_certs(&fedora_config()),
+            build_cf_with_ca_certs(&ubi_config()),
+            build_cf_with_ca_certs(&hummingbird_config()),
+        ] {
+            assert!(
+                content.contains(
+                    "COPY certs/system-ca.crt /etc/pki/ca-trust/source/anchors/system-ca.crt"
+                ),
+                "missing COPY instruction: {content}"
+            );
+            assert!(
+                content.contains("RUN update-ca-trust"),
+                "missing update-ca-trust: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn ubuntu_ca_certs_included_when_true() {
+        let content = build_cf_with_ca_certs(&ubuntu_config("24.04"));
+        assert!(
+            content.contains(
+                "COPY certs/system-ca.crt /usr/local/share/ca-certificates/system-ca.crt"
+            ),
+            "missing COPY instruction: {content}"
+        );
+        assert!(
+            content.contains("RUN update-ca-certificates"),
+            "missing update-ca-certificates: {content}"
+        );
+    }
+
+    #[test]
+    fn dnf_ca_cert_appears_before_dnf_install() {
+        for content in [
+            build_cf_with_ca_certs(&fedora_config()),
+            build_cf_with_ca_certs(&ubi_config()),
+            build_cf_with_ca_certs(&hummingbird_config()),
+        ] {
+            let cert_pos = content.find("COPY certs/system-ca.crt").unwrap();
+            let dnf_pos = content.find("RUN dnf install").unwrap();
+            assert!(
+                cert_pos < dnf_pos,
+                "CA cert COPY must appear before dnf install"
+            );
+        }
+    }
+
+    #[test]
+    fn ubuntu_ca_cert_appears_after_apt_install() {
+        let content = build_cf_with_ca_certs(&ubuntu_config("24.04"));
+        let apt_pos = content.find("RUN apt-get update").unwrap();
+        let cert_pos = content.find("COPY certs/system-ca.crt").unwrap();
+        assert!(
+            cert_pos > apt_pos,
+            "CA cert COPY must appear after apt-get install"
+        );
     }
 }
