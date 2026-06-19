@@ -382,10 +382,13 @@ mod tests {
     // --- ContainerCli::check_in_path ---
 
     #[test]
-    #[cfg(unix)]
     fn check_in_path_finds_existing_binary() {
-        // sh is guaranteed to exist on every Unix-like system.
-        assert!(which("sh").is_ok());
+        // Use a shell guaranteed to be in PATH on every supported platform.
+        #[cfg(unix)]
+        let binary = "sh";
+        #[cfg(windows)]
+        let binary = "cmd";
+        assert!(which(binary).is_ok());
     }
 
     #[test]
