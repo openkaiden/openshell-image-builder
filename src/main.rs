@@ -68,6 +68,8 @@ struct Cli {
     with_workspace_config: bool,
     #[arg(long, help = "Include OpenShell sandbox policy in the image")]
     with_policy: bool,
+    #[arg(long, help = "Generate and include agent settings in the image")]
+    with_agent_settings: bool,
 }
 
 fn main() {
@@ -89,6 +91,7 @@ fn main() {
         cli.endpoint.as_deref(),
         cli.model.as_deref(),
         cli.with_policy,
+        cli.with_agent_settings,
         &build::PodmanRunner,
     ) {
         eprintln!("Error: {e}");
@@ -106,6 +109,7 @@ fn run(
     endpoint: Option<&str>,
     model: Option<&str>,
     with_policy: bool,
+    with_agent_settings: bool,
     runner: &dyn build::Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
@@ -132,16 +136,20 @@ fn run(
         .prefix("openshell-image-builder")
         .tempdir()?;
     let features = feature::stage_all(workspace.as_ref(), context_dir.path())?;
-    let has_agent_settings = if let Some(a) = agent.as_deref() {
-        let settings_dir = config::agent_settings_dir(config_path.as_deref(), a.id())?;
-        stage_agent_settings(
-            a,
-            settings_dir.as_deref(),
-            inference_kind.as_ref(),
-            endpoint,
-            model,
-            context_dir.path(),
-        )?
+    let has_agent_settings = if with_agent_settings {
+        if let Some(a) = agent.as_deref() {
+            let settings_dir = config::agent_settings_dir(config_path.as_deref(), a.id())?;
+            stage_agent_settings(
+                a,
+                settings_dir.as_deref(),
+                inference_kind.as_ref(),
+                endpoint,
+                model,
+                context_dir.path(),
+            )?
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -815,6 +823,7 @@ mod tests {
             None,
             None,
             false,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -831,6 +840,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             false,
             &FakeRunner(0),
         );
@@ -849,6 +859,7 @@ mod tests {
             None,
             None,
             false,
+            false,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -865,6 +876,7 @@ mod tests {
             Some(inference::InferenceKind::Ollama),
             None,
             None,
+            false,
             false,
             &FakeRunner(0),
         );
@@ -889,6 +901,7 @@ mod tests {
             None,
             None,
             false,
+            false,
             &FakeRunner(1),
         );
         assert!(result.is_err());
@@ -905,6 +918,7 @@ mod tests {
             Some(inference::InferenceKind::VertexAi),
             Some("https://my-vertex-proxy.example.com"),
             None,
+            false,
             false,
             &FakeRunner(0),
         );
@@ -928,6 +942,7 @@ mod tests {
             Some(inference::InferenceKind::Anthropic),
             None,
             Some("claude-opus-4-5"),
+            false,
             false,
             &FakeRunner(0),
         );
@@ -1088,6 +1103,25 @@ mod tests {
             None,
             None,
             true,
+            false,
+            &FakeRunner(0),
+        );
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn run_with_agent_settings_and_claude_agent_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run(
+            "test:latest",
+            Some(tmp.path().to_path_buf()),
+            false,
+            Some(agent::AgentKind::Claude),
+            None,
+            None,
+            None,
+            false,
+            true,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1104,6 +1138,7 @@ mod tests {
             Some(inference::InferenceKind::OpenAi),
             None,
             None,
+            false,
             false,
             &FakeRunner(0),
         );

@@ -8,7 +8,7 @@ The tool assembles the image in layers — base image, agent installation, agent
 
 1. **Base image** — Ubuntu, Fedora, Red Hat UBI, or Red Hat Hardened Images (HummingBird), any tag. Ubuntu 24.04 is the default.
 2. **Agent installation** (`--agent`) — the agent binary is pre-installed in `PATH`.
-3. **Agent settings**
+3. **Agent settings** (`--with-agent-settings`) — only included when this flag is set.
    - **User settings** — settings files are pre-populated with settings files provided by the user.
    - **Auto-onboarding** — settings files are updated to skip onboarding steps (choose theme, trust directory, etc).
    - **Skills** — skills are copied in the agent's skills directory.
@@ -174,6 +174,8 @@ openshell-image-builder --agent opencode myimage:latest
 
 ## Agent settings
 
+Pass `--with-agent-settings` to generate and include agent settings in the image. Without this flag, no settings files are written and no auto-configuration is applied — the image contains only the agent binary.
+
 You can pre-populate the sandbox home directory with settings files specific to an agent. Place the files under:
 
 ```
@@ -191,7 +193,7 @@ mkdir -p ~/.config/openshell-image-builder/agents/claude/.claude
 cp ~/.claude/settings.json \
    ~/.config/openshell-image-builder/agents/claude/.claude/settings.json
 
-openshell-image-builder --agent claude myimage:latest
+openshell-image-builder --agent claude --with-agent-settings myimage:latest
 ```
 
 The file will be present at `/sandbox/.claude/settings.json` in the image.
@@ -203,14 +205,14 @@ mkdir -p ~/.config/openshell-image-builder/agents/opencode/.config/opencode
 cp ~/.config/opencode/config.json \
    ~/.config/openshell-image-builder/agents/opencode/.config/opencode/config.json
 
-openshell-image-builder --agent opencode myimage:latest
+openshell-image-builder --agent opencode --with-agent-settings myimage:latest
 ```
 
 The file will be present at `/sandbox/.config/opencode/config.json` in the image.
 
 ### Automatic configuration — Claude Code
 
-When `--agent claude` is used, the builder automatically creates or updates `/sandbox/.claude.json` with the following settings to skip the interactive onboarding dialogs that would otherwise appear on first launch:
+When `--agent claude --with-agent-settings` is used, the builder automatically creates or updates `/sandbox/.claude.json` with the following settings to skip the interactive onboarding dialogs that would otherwise appear on first launch:
 
 - `hasCompletedOnboarding: true` — marks the setup wizard as complete.
 - `projects["/sandbox"].hasTrustDialogAccepted: true` — pre-accepts the workspace trust prompt for the sandbox home directory.
@@ -306,7 +308,7 @@ The model string is passed through as-is — use whatever identifier your agent 
 
 ### Automatic configuration — OpenCode + Ollama
 
-When `--agent opencode --inference ollama` is used, the builder automatically writes `/sandbox/.config/opencode/config.json` to configure OpenCode's Ollama provider:
+When `--agent opencode --inference ollama --with-agent-settings` is used, the builder automatically writes `/sandbox/.config/opencode/config.json` to configure OpenCode's Ollama provider:
 
 ```json
 {
@@ -506,6 +508,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--model <MODEL>`              | Default model for the agent to use (see [Default model](#default-model---model)) |
 | `--with-workspace-config`      | Read `.kaiden/workspace.json` and apply its features, skills, and network rules |
 | `--with-policy`                | Include OpenShell sandbox policy (`/etc/openshell/policy.yaml`) in the image   |
+| `--with-agent-settings`        | Generate and include agent settings in the image (see [Agent settings](#agent-settings)) |
 | `-v` / `-vv`                   | Increase log verbosity (info / debug)                              |
 
 ## Examples
@@ -517,6 +520,7 @@ $ openshell-image-builder \
   --agent claude \
   --inference anthropic \
   --model claude-sonnet-4-6 \
+  --with-agent-settings \
   sandbox_image:claude_anthropic
 
 $ openshell provider create \
@@ -550,6 +554,7 @@ $ openshell-image-builder \
   --agent opencode \
   --inference anthropic \
   --model claude-sonnet-4-6 \
+  --with-agent-settings \
   sandbox_image:opencode_anthropic
 
 $ openshell provider create \
@@ -583,6 +588,7 @@ $ openshell-image-builder \
   --agent claude \
   --inference vertexai \
   --model claude-sonnet-4-6 \
+  --with-agent-settings \
   sandbox_image:claude_vertexai
 
 # change value of ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
@@ -608,6 +614,7 @@ $ openshell-image-builder \
   --agent opencode \
   --inference ollama \
   --model qwen3-coder:30b \
+  --with-agent-settings \
   sandbox_image:opencode_ollama
 
 $ openshell sandbox create \
@@ -634,6 +641,7 @@ $ openshell-image-builder \
   --agent opencode \
   --inference openai \
   --model gpt-4o \
+  --with-agent-settings \
   sandbox_image:opencode_openai
 
 $ openshell provider create \
@@ -668,6 +676,7 @@ $ openshell-image-builder \
   --inference openai \
   --endpoint https://my-openai-proxy.example.com/v1 \
   --model gpt-4o \
+  --with-agent-settings \
   sandbox_image:opencode_openai_custom
 ```
 
@@ -678,6 +687,7 @@ $ openshell-image-builder \
   --agent opencode \
   --inference vertexai \
   --model claude-sonnet-4-6 \
+  --with-agent-settings \
   sandbox_image:opencode_vertexai
 
 # change value of GOOGLE_CLOUD_PROJECT and VERTEX_LOCATION

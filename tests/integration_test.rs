@@ -113,6 +113,7 @@ static UBI_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static HUMMINGBIRD_OPENCODE_OPENAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_OPENAI_MODEL_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_NO_POLICY_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_CLAUDE_NO_AGENT_SETTINGS_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn config_dir_with_agent_settings(agent: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -134,6 +135,7 @@ fn ubuntu_claude_settings_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "claude",
+                "--with-agent-settings",
             ],
         )
     })
@@ -152,6 +154,7 @@ fn ubuntu_claude_with_claude_json_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "claude",
+                "--with-agent-settings",
             ],
         )
     })
@@ -167,6 +170,7 @@ fn ubuntu_opencode_settings_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "opencode",
+                "--with-agent-settings",
             ],
         )
     })
@@ -187,6 +191,7 @@ fn ubuntu_claude_image() -> &'static str {
                 "--inference",
                 "anthropic",
                 "--with-policy",
+                "--with-agent-settings",
             ],
         )
     })
@@ -1157,6 +1162,7 @@ fn ubuntu_opencode_ollama_image() -> &'static str {
                 "--inference",
                 "ollama",
                 "--with-policy",
+                "--with-agent-settings",
             ],
         )
     })
@@ -1296,6 +1302,7 @@ fn ubuntu_opencode_openai_model_image() -> &'static str {
                 "openai",
                 "--model",
                 MODEL_OPENAI,
+                "--with-agent-settings",
             ],
         )
     })
@@ -1304,6 +1311,15 @@ fn ubuntu_opencode_openai_model_image() -> &'static str {
 fn ubuntu_no_policy_image() -> &'static str {
     UBUNTU_NO_POLICY_IMAGE
         .get_or_init(|| build_image("openshell-test-ubuntu-no-policy:integration", &[]))
+}
+
+fn ubuntu_claude_no_agent_settings_image() -> &'static str {
+    UBUNTU_CLAUDE_NO_AGENT_SETTINGS_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-claude-no-agent-settings:integration",
+            &["--agent", "claude"],
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2027,6 +2043,7 @@ fn ubuntu_claude_anthropic_model_image() -> &'static str {
                 "anthropic",
                 "--model",
                 MODEL_CLAUDE,
+                "--with-agent-settings",
             ],
         )
     })
@@ -2043,6 +2060,7 @@ fn ubuntu_claude_vertexai_model_image() -> &'static str {
                 "vertexai",
                 "--model",
                 MODEL_CLAUDE,
+                "--with-agent-settings",
             ],
         )
     })
@@ -2059,6 +2077,7 @@ fn ubuntu_opencode_anthropic_model_image() -> &'static str {
                 "anthropic",
                 "--model",
                 MODEL_CLAUDE,
+                "--with-agent-settings",
             ],
         )
     })
@@ -2075,6 +2094,7 @@ fn ubuntu_opencode_ollama_model_image() -> &'static str {
                 "ollama",
                 "--model",
                 MODEL_OLLAMA,
+                "--with-agent-settings",
             ],
         )
     })
@@ -2364,6 +2384,7 @@ fn ubuntu_opencode_anthropic_endpoint_image() -> &'static str {
                 "--endpoint",
                 ANTHROPIC_PROXY_URL,
                 "--with-policy",
+                "--with-agent-settings",
             ],
         )
     })
@@ -2381,6 +2402,7 @@ fn ubuntu_opencode_ollama_custom_endpoint_image() -> &'static str {
                 "--endpoint",
                 OLLAMA_CUSTOM_ENDPOINT,
                 "--with-policy",
+                "--with-agent-settings",
             ],
         )
     })
@@ -2588,6 +2610,27 @@ mod with_policy {
 }
 
 // ---------------------------------------------------------------------------
+// --with-agent-settings flag tests
+// ---------------------------------------------------------------------------
+
+mod with_agent_settings {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn claude_json_absent_without_flag() {
+        let out = run_in_image(
+            ubuntu_claude_no_agent_settings_image(),
+            "test -f /sandbox/.claude.json",
+        );
+        assert!(
+            !out.status.success(),
+            ".claude.json should not be present when --with-agent-settings is not set"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup — runs when the test process exits, after all tests complete
 // ---------------------------------------------------------------------------
 
@@ -2648,6 +2691,7 @@ fn cleanup_images() {
         "openshell-test-no-workspace-config-opencode-skills-ubuntu:integration",
         "openshell-test-no-workspace-config-network-hosts-ubuntu:integration",
         "openshell-test-ubuntu-no-policy:integration",
+        "openshell-test-ubuntu-claude-no-agent-settings:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
