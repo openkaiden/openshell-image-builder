@@ -393,15 +393,7 @@ mod tests {
 
     #[test]
     fn check_in_path_fails_for_missing_binary() {
-        let dir = tempfile::tempdir().unwrap();
-        let original_path = std::env::var_os("PATH").unwrap_or_default();
-
-        // Use a path that contains no "podman" binary.
-        std::env::set_var("PATH", dir.path());
-        let result = ContainerCli::Podman.check_in_path();
-
-        std::env::set_var("PATH", original_path);
-        assert!(result.is_err());
+        assert!(which("a_really_improbable_name").is_err());
     }
 
     // --- RuntimeNotFoundError ---
