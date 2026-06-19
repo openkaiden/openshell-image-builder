@@ -63,6 +63,8 @@ use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
+use which::which;
+
 use tempfile::NamedTempFile;
 
 // ---------------------------------------------------------------------------
@@ -103,18 +105,18 @@ impl ContainerCli {
         }
     }
 
-    /// Returns `Ok(())` when the binary is found in `PATH`, or a
-    /// [`RuntimeNotFoundError`] otherwise.
+    /// Returns `Ok(())` when an executable named [`binary`] is found in
+    /// `PATH`, or a [`RuntimeNotFoundError`] otherwise.
     ///
-    /// Uses [`std::env::split_paths`] to iterate `PATH` entries — no extra
-    /// dependencies, works on every platform.
+    /// Uses the [`which`](https://docs.rs/which) crate, which checks both
+    /// file existence and the executable bit (Unix) / file extension (Windows).
     ///
     /// # Errors
     ///
     /// Returns [`RuntimeNotFoundError`] if:
     /// - The `PATH` environment variable is not set.
-    /// - None of the directories in `PATH` contain an executable file with the
-    ///   binary name returned by [`ContainerCli::binary`].
+    /// - No executable with the binary name returned by [`ContainerCli::binary`]
+    ///   is found in any `PATH` directory.
     ///
     /// # Examples
     ///
@@ -123,12 +125,11 @@ impl ContainerCli {
     ///
     /// ContainerCli::Podman.check_in_path().expect("podman must be installed");
     /// ```
+    ///
+    /// [`binary`]: ContainerCli::binary
     pub fn check_in_path(&self) -> Result<(), RuntimeNotFoundError> {
         let binary = self.binary();
-        let found = std::env::var_os("PATH")
-            .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
-            .unwrap_or(false);
-        if found {
+        if which(binary).is_ok() {
             Ok(())
         } else {
             Err(RuntimeNotFoundError(binary.to_string()))
@@ -385,36 +386,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake_bin = dir.path().join("fake-cli-xyz");
         std::fs::write(&fake_bin, "").unwrap();
-        // Mark executable on Unix.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        // Temporarily override PATH to only contain our temp dir.
         let original_path = std::env::var_os("PATH").unwrap_or_default();
         std::env::set_var("PATH", dir.path());
-
-        // ContainerCli doesn't have "fake-cli-xyz" as a variant, so we test
-        // with a struct that returns the right name instead.
-        struct SpecificCli;
-        impl SpecificCli {
-            fn check(&self) -> Result<(), RuntimeNotFoundError> {
-                let binary = "fake-cli-xyz";
-                let found = std::env::var_os("PATH")
-                    .map(|p| std::env::split_paths(&p).any(|d| d.join(binary).is_file()))
-                    .unwrap_or(false);
-                if found {
-                    Ok(())
-                } else {
-                    Err(RuntimeNotFoundError(binary.into()))
-                }
-            }
-        }
-        let result = SpecificCli.check();
-
+        let result = which("fake-cli-xyz");
         std::env::set_var("PATH", original_path);
+
         assert!(result.is_ok());
     }
 
