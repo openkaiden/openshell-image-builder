@@ -601,18 +601,36 @@ $ openshell-image-builder \
   --with-agent-settings \
   sandbox_image:claude_vertexai
 
-# change value of ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
-# also change source paths for mounts
-# NOTE: gcloud credentials are not protected with this method
+$ openshell settings set \
+  --global \
+  --key providers_v2_enabled \
+  --value true \
+  --yes
+
+# change value of VERTEX_AI_PROJECT_ID and VERTEX_AI_REGION
+$ openshell provider create \
+  --name vertex-local \
+  --type google-vertex-ai \
+  --from-gcloud-adc \
+  --config VERTEX_AI_PROJECT_ID=my-gcp-project \
+  --config VERTEX_AI_REGION=global
+
+# change with your preferred model
+$ openshell inference set \
+  --provider vertex-local \
+  --model claude-sonnet-4-6
+
+# Change source paths for mounts
 $ openshell sandbox create \
   --from sandbox_image:claude_vertexai \
-  --env CLAUDE_CODE_USE_VERTEX=1 \
-  --env ANTHROPIC_VERTEX_PROJECT_ID=my-gcp-project \
-  --env CLOUD_ML_REGION=global \
-  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false},{"type":"bind","source":"/path/to/.config/gcloud/application_default_credentials.json","target":"/sandbox/.config/gcloud/application_default_credentials.json","read_only":true}]}}' \
+  --provider vertex-local \
+  --env ANTHROPIC_BASE_URL="https://inference.local" \
+  --env ANTHROPIC_API_KEY=unused \
+  --env CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
   --name claude_vertexai_sandbox \
   --no-auto-providers \
-  -- claude
+  -- bash -c 'cd /sandbox/work && claude --bare'
 ```
 
 ### OpenCode agent + Ollama (local models)
@@ -704,18 +722,34 @@ $ openshell-image-builder \
   --with-agent-settings \
   sandbox_image:opencode_vertexai
 
-# change value of GOOGLE_CLOUD_PROJECT and VERTEX_LOCATION
-# also change source paths for mounts
-# NOTE: gcloud credentials are not protected with this method
+$ openshell settings set \
+  --global \
+  --key providers_v2_enabled \
+  --value true \
+  --yes
+
+# change value of VERTEX_AI_PROJECT_ID and VERTEX_AI_REGION
+$ openshell provider create \
+  --name vertex-local \
+  --type google-vertex-ai \
+  --from-gcloud-adc \
+  --config VERTEX_AI_PROJECT_ID=my-gcp-project \
+  --config VERTEX_AI_REGION=global
+
+# change with your preferred model
+$ openshell inference set \
+  --provider vertex-local \
+  --model claude-sonnet-4-6
+
+# Change source paths for mounts
 $ openshell sandbox create \
   --from sandbox_image:opencode_vertexai \
-  --env GOOGLE_APPLICATION_CREDENTIALS=/sandbox/.config/gcloud/application_default_credentials.json \
-  --env GOOGLE_CLOUD_PROJECT=my-gcp-project \
-  --env VERTEX_LOCATION=global \
-  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false},{"type":"bind","source":"/path/to/.config/gcloud/application_default_credentials.json","target":"/sandbox/.config/gcloud/application_default_credentials.json","read_only":true}]}}' \
+  --provider vertex-local \
+  --env ANTHROPIC_BASE_URL="https://inference.local/v1" \
+  --env ANTHROPIC_API_KEY=unused \
+  --env CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
+  --driver-config-json '{"podman":{"mounts":[{"type":"bind","source":"/path/to/your/sources","target":"/sandbox/work","read_only":false}]}}' \
   --name opencode_vertexai_sandbox \
   --no-auto-providers \
-  -- opencode
-
-# select a model with /models
+  -- bash -c 'cd /sandbox/work && opencode'
 ```
