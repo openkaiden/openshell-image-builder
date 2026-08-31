@@ -1,0 +1,189 @@
+# Copyright (C) 2026 Red Hat, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: VM Runtime
+
+# Covers `--runtime vm`, which pr-check.yml cannot: the `vm` feature is off by
+# default, so the libkrun FFI code is never compiled there.
+#
+# Prerequisites — one-time configuration required before the `integration` job
+# can run:
+#
+# 1. Self-hosted runner (Settings → Actions → Runners → New self-hosted runner)
+#    A bare-metal macOS arm64 machine with kern.hv_support=1 is required.
+#    GitHub-hosted macOS runners are themselves virtual machines
+#    (kern.hv_support=0), so Hypervisor.framework is unavailable there and
+#    krun_start_enter fails with EINVAL.
+#    Register the runner with labels: macos, arm64
+#    (the self-hosted label is added automatically).
+#
+# 2. Environment with required reviewers (Settings → Environments → New environment)
+#    Name: integration
+#    Enable "Required reviewers" and add maintainers as reviewers.
+#    Without this, a pull request from an untrusted contributor could run
+#    arbitrary code on the self-hosted machine.
+#
+# Until both exist the `integration` job stays queued; `build` and
+# `build-rootfs` run on hosted runners and are unaffected.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Compile guard. Runs on every pull request and needs no special hardware,
+  # because compiling the FFI code does not require a working hypervisor.
+  build:
+    name: Build with the vm feature
+    runs-on: macos-26 # Apple Silicon — libkrun exists for no other target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1 stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-vm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-vm-
+
+      - name: Install libkrun
+        run: |
+          # libkrun is not in homebrew-core; `brew trust` lets Homebrew load
+          # formulae from the third-party tap non-interactively.
+          brew tap libkrun/krun
+          brew trust libkrun/krun
+          # llvm supplies the libclang that krun-sys needs for bindgen;
+          # pkgconf locates libkrun itself.
+          brew install libkrun/krun/libkrun llvm pkgconf
+
+      - name: Set build environment
+        run: |
+          PREFIX=$(brew --prefix)
+          echo "LIBCLANG_PATH=$PREFIX/opt/llvm/lib" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$PREFIX/opt/llvm/lib:$PREFIX/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Clippy
+        run: cargo clippy --workspace --features vm -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --features vm
+
+      - name: Verify the hypervisor entitlement applies
+        run: |
+          cargo build --features vm
+          codesign --sign - --entitlements entitlements.plist --force \
+            target/debug/openshell-image-builder
+          codesign -d --entitlements :- target/debug/openshell-image-builder | \
+            grep -q "com.apple.security.hypervisor"
+
+  # The VM boots from a Linux rootfs with buildah installed. Building it needs
+  # podman on native arm64, which the macOS runners do not have.
+  build-rootfs:
+    name: Build the VM rootfs
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install podman
+        run: sudo apt-get update && sudo apt-get install -y podman
+
+      - name: Build VM rootfs
+        run: ./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs
+
+      # upload-artifact zips its input, which drops symlinks and the executable
+      # bit — both of which a bootable rootfs needs. Tar it first.
+      - name: Archive rootfs
+        run: tar -czf vm-rootfs.tar.gz vm-rootfs/
+
+      - name: Upload rootfs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vm-rootfs
+          path: vm-rootfs.tar.gz
+
+  # The only job that actually boots a VM, so the only one needing bare metal.
+  integration:
+    name: Build an image in a VM
+    runs-on: [self-hosted, macos, arm64]
+    needs: build-rootfs
+    environment: integration # requires maintainer approval before the job runs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1 stable
+        with:
+          toolchain: stable
+
+      - name: Install libkrun
+        run: |
+          brew tap libkrun/krun
+          brew trust libkrun/krun
+          brew install libkrun/krun/libkrun llvm pkgconf
+
+      - name: Set build environment
+        run: |
+          PREFIX=$(brew --prefix)
+          echo "LIBCLANG_PATH=$PREFIX/opt/llvm/lib" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$PREFIX/opt/llvm/lib:$PREFIX/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Build binary
+        run: cargo build --release --features vm
+
+      # Hypervisor.framework refuses a process whose signature lacks the
+      # entitlement, so this is not optional — without it the VM never boots.
+      - name: Sign binary
+        run: |
+          codesign --sign - --entitlements entitlements.plist --force \
+            target/release/openshell-image-builder
+
+      - name: Download rootfs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vm-rootfs
+
+      - name: Extract rootfs
+        run: tar -xzf vm-rootfs.tar.gz
+
+      - name: Build an image in the VM
+        run: |
+          ./target/release/openshell-image-builder \
+            --runtime vm \
+            --vm-rootfs ./vm-rootfs \
+            --vm-output ./openshell-vm-test.tar \
+            -v \
+            openshell-vm-test:integration
+
+      - name: Verify the exported rootfs
+        run: |
+          test -s ./openshell-vm-test.tar
+          mkdir -p /tmp/vm-rootfs-check
+          tar -xf ./openshell-vm-test.tar -C /tmp/vm-rootfs-check ./etc/passwd
+          # The generated Containerfile always creates the sandbox user the
+          # agent runs as, so its absence means the build produced the wrong
+          # filesystem rather than merely an empty one.
+          grep -q '^sandbox:' /tmp/vm-rootfs-check/etc/passwd
