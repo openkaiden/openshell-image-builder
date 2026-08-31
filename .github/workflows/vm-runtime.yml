@@ -19,8 +19,8 @@ name: VM Runtime
 # Covers `--runtime vm`, which pr-check.yml cannot: the `vm` feature is off by
 # default, so the libkrun FFI code is never compiled there.
 #
-# Prerequisites — one-time configuration required before the `integration` job
-# can run:
+# Prerequisites — one-time configuration required before the `build` and
+# `integration` jobs can run:
 #
 # 1. Self-hosted runner (Settings → Actions → Runners → New self-hosted runner)
 #    A bare-metal macOS arm64 machine with kern.hv_support=1 is required.
@@ -30,25 +30,42 @@ name: VM Runtime
 #    Register the runner with labels: macos, arm64
 #    (the self-hosted label is added automatically).
 #
+#    Install the build prerequisites on it once:
+#      brew tap libkrun/krun && brew trust libkrun/krun
+#      brew install libkrun/krun/libkrun pkgconf
+#    Compiling also needs libclang, from either `brew install llvm` or the
+#    Xcode Command Line Tools.
+#
 # 2. Environment with required reviewers (Settings → Environments → New environment)
 #    Name: integration
 #    Enable "Required reviewers" and add maintainers as reviewers.
 #    Without this, a pull request from an untrusted contributor could run
-#    arbitrary code on the self-hosted machine.
+#    arbitrary code on the self-hosted machine — a cargo build alone is enough,
+#    since build scripts execute during it.
 #
-# Until both exist the `integration` job stays queued; `build` and
-# `build-rootfs` run on hosted runners and are unaffected.
+# Until both exist those two jobs stay queued; `build-rootfs` runs on a hosted
+# runner and is unaffected.
+#
+# Note on installing libkrun: the tap's libkrunfw formula declares no version,
+# so Homebrew infers "64" from the aarch64 in its URL and then looks for a
+# bottle filename that the tap does not publish. If a fresh install 404s on
+# libkrunfw, bypass the bottle with:
+#   brew install --build-from-source libkrun/krun/libkrunfw
+# That is why these jobs do not install libkrun themselves.
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  # Compile guard. Runs on every pull request and needs no special hardware,
-  # because compiling the FFI code does not require a working hypervisor.
+  # Compile guard. Booting a VM is not needed to compile the FFI code, but
+  # libkrun must be present to link against — and installing it on a hosted
+  # runner is currently broken (see the note above), so this runs alongside
+  # the integration job on hardware that already has it.
   build:
     name: Build with the vm feature
-    runs-on: macos-26 # Apple Silicon — libkrun exists for no other target
+    runs-on: [self-hosted, macos, arm64]
+    environment: integration # requires maintainer approval before the job runs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -58,32 +75,33 @@ jobs:
           toolchain: stable
           components: clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-vm-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-vm-
-
-      - name: Install libkrun
-        run: |
-          # libkrun is not in homebrew-core; `brew trust` lets Homebrew load
-          # formulae from the third-party tap non-interactively.
-          brew tap libkrun/krun
-          brew trust libkrun/krun
-          # llvm supplies the libclang that krun-sys needs for bindgen;
-          # pkgconf locates libkrun itself.
-          brew install libkrun/krun/libkrun llvm pkgconf
-
       - name: Set build environment
         run: |
           PREFIX=$(brew --prefix)
-          echo "LIBCLANG_PATH=$PREFIX/opt/llvm/lib" >> "$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=$PREFIX/opt/llvm/lib:$PREFIX/lib" >> "$GITHUB_ENV"
+          # krun-sys generates its bindings with bindgen, which needs libclang.
+          # Prefer a Homebrew llvm, else fall back to the Command Line Tools
+          # copy that every Xcode install provides.
+          if [ -d "$PREFIX/opt/llvm/lib" ]; then
+            LIBCLANG="$PREFIX/opt/llvm/lib"
+          else
+            LIBCLANG="$(xcode-select -p)/usr/lib"
+          fi
+          echo "LIBCLANG_PATH=$LIBCLANG" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$LIBCLANG:$PREFIX/lib" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      # A self-hosted runner's setup drifts over time, so say plainly what is
+      # missing rather than leaving it to a build-script error deep in cargo.
+      - name: Check prerequisites
+        run: |
+          missing=""
+          [ -f "$LIBCLANG_PATH/libclang.dylib" ] || missing="$missing libclang"
+          command -v pkg-config >/dev/null 2>&1 || missing="$missing pkg-config"
+          pkg-config --exists libkrun 2>/dev/null || missing="$missing libkrun"
+          if [ -n "$missing" ]; then
+            echo "::error::missing on this runner:$missing — see the setup notes in this workflow"
+            exit 1
+          fi
 
       - name: Clippy
         run: cargo clippy --workspace --features vm -- -D warnings
@@ -138,18 +156,35 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Install libkrun
-        run: |
-          brew tap libkrun/krun
-          brew trust libkrun/krun
-          brew install libkrun/krun/libkrun llvm pkgconf
-
       - name: Set build environment
         run: |
           PREFIX=$(brew --prefix)
-          echo "LIBCLANG_PATH=$PREFIX/opt/llvm/lib" >> "$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=$PREFIX/opt/llvm/lib:$PREFIX/lib" >> "$GITHUB_ENV"
+          if [ -d "$PREFIX/opt/llvm/lib" ]; then
+            LIBCLANG="$PREFIX/opt/llvm/lib"
+          else
+            LIBCLANG="$(xcode-select -p)/usr/lib"
+          fi
+          echo "LIBCLANG_PATH=$LIBCLANG" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$LIBCLANG:$PREFIX/lib" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          # libkrun dlopens its bundled kernel at run time, which no rpath
+          # covers — without this the VM fails with "Couldn't find or load
+          # libkrunfw".
+          echo "DYLD_LIBRARY_PATH=$PREFIX/lib" >> "$GITHUB_ENV"
+
+      - name: Check prerequisites
+        run: |
+          missing=""
+          [ -f "$LIBCLANG_PATH/libclang.dylib" ] || missing="$missing libclang"
+          command -v pkg-config >/dev/null 2>&1 || missing="$missing pkg-config"
+          pkg-config --exists libkrun 2>/dev/null || missing="$missing libkrun"
+          ls "$(brew --prefix)"/lib/libkrunfw*.dylib >/dev/null 2>&1 || missing="$missing libkrunfw"
+          # Hosted runners report 0 here; only bare metal can start a VM.
+          [ "$(sysctl -n kern.hv_support 2>/dev/null)" = "1" ] || missing="$missing hypervisor-support"
+          if [ -n "$missing" ]; then
+            echo "::error::missing on this runner:$missing — see the setup notes in this workflow"
+            exit 1
+          fi
 
       - name: Build binary
         run: cargo build --release --features vm
@@ -181,9 +216,15 @@ jobs:
       - name: Verify the exported rootfs
         run: |
           test -s ./openshell-vm-test.tar
-          mkdir -p /tmp/vm-rootfs-check
-          tar -xf ./openshell-vm-test.tar -C /tmp/vm-rootfs-check ./etc/passwd
+          mkdir -p "$RUNNER_TEMP/vm-rootfs-check"
+          tar -xf ./openshell-vm-test.tar -C "$RUNNER_TEMP/vm-rootfs-check" ./etc/passwd
           # The generated Containerfile always creates the sandbox user the
           # agent runs as, so its absence means the build produced the wrong
           # filesystem rather than merely an empty one.
-          grep -q '^sandbox:' /tmp/vm-rootfs-check/etc/passwd
+          grep -q '^sandbox:' "$RUNNER_TEMP/vm-rootfs-check/etc/passwd"
+
+      # This runner is someone's own machine, and the exported rootfs is a few
+      # hundred MB. Do not leave it lying around, even when the job fails.
+      - name: Clean up
+        if: always()
+        run: rm -rf ./vm-rootfs ./vm-rootfs.tar.gz ./openshell-vm-test.tar "$RUNNER_TEMP/vm-rootfs-check"
