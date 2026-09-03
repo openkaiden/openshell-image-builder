@@ -192,38 +192,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Each backend validates what it needs before any staging work happens, so
-    // a missing CLI or an unusable VM rootfs fails immediately rather than after
-    // the build context has been assembled.
-    //
     // `Backend` borrows what it points at, so the owned values have to outlive
     // it: this resolves them first, then borrows them below.
-    let selected = match cli.runtime.container_cli() {
-        Some(container_cli) => {
-            if let Err(e) = container_cli.check_in_path() {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
-            Selected::Cli(container_cli)
-        }
-        None => {
-            let config = vm_config(cli.vm_rootfs.clone(), cli.vm_cpus, cli.vm_memory);
-            if let Err(e) = config.check_rootfs() {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
-            let output = cli
-                .vm_output
-                .clone()
-                .unwrap_or_else(|| vm_output_path(&cli.tag));
-            Selected::Vm(config, output)
+    let selected = match select_runtime(&cli) {
+        Ok(selected) => selected,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
     };
-
-    let backend = match &selected {
-        Selected::Cli(container_cli) => Backend::Cli(container_cli, &ContainerRunner),
-        Selected::Vm(config, output) => Backend::Vm(config, &KrunRunner, output),
-    };
+    let backend = backend_for(&selected);
 
     let ssl_certs = if cli.disable_ssl_certs {
         None
@@ -247,10 +225,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    // A CLI build leaves a tagged image the user can look up; a VM build leaves
-    // a file, so say where it landed.
-    if let Selected::Vm(_, output) = &selected {
-        println!("Wrote {}", output.display());
+    if let Some(summary) = build_summary(&selected) {
+        println!("{summary}");
     }
 }
 
@@ -315,6 +291,49 @@ fn vm_output_path(tag: &str) -> PathBuf {
         })
         .collect();
     PathBuf::from(format!("{name}.tar"))
+}
+
+/// Resolves `--runtime` and the flags that go with it into the backend to build
+/// through, rejecting a backend that cannot run.
+///
+/// Each backend validates what it needs here, before any staging work happens,
+/// so a container CLI missing from `PATH` or an unusable VM rootfs fails
+/// immediately rather than after the build context has been assembled.
+fn select_runtime(cli: &Cli) -> Result<Selected, String> {
+    match cli.runtime.container_cli() {
+        Some(container_cli) => {
+            container_cli.check_in_path().map_err(|e| e.to_string())?;
+            Ok(Selected::Cli(container_cli))
+        }
+        None => {
+            let config = vm_config(cli.vm_rootfs.clone(), cli.vm_cpus, cli.vm_memory);
+            config.check_rootfs().map_err(|e| e.to_string())?;
+            let output = cli
+                .vm_output
+                .clone()
+                .unwrap_or_else(|| vm_output_path(&cli.tag));
+            Ok(Selected::Vm(config, output))
+        }
+    }
+}
+
+/// Borrows a [`Selected`] as the [`Backend`] that [`run`] builds through.
+fn backend_for(selected: &Selected) -> Backend<'_> {
+    match selected {
+        Selected::Cli(container_cli) => Backend::Cli(container_cli, &ContainerRunner),
+        Selected::Vm(config, output) => Backend::Vm(config, &KrunRunner, output),
+    }
+}
+
+/// What to report after a successful build, if anything.
+///
+/// A CLI build leaves a tagged image the user can look up, so there is nothing
+/// to add; a VM build leaves a file, so say where it landed.
+fn build_summary(selected: &Selected) -> Option<String> {
+    match selected {
+        Selected::Cli(_) => None,
+        Selected::Vm(_, output) => Some(format!("Wrote {}", output.display())),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1754,10 +1773,10 @@ mod tests {
     #[test]
     fn vm_config_defaults_the_rootfs_next_to_the_binary() {
         let config = vm_config(None, None, None);
+        let rootfs = config.rootfs.display().to_string();
         assert!(
             config.rootfs.ends_with("vm-rootfs"),
-            "unexpected default rootfs: {}",
-            config.rootfs.display()
+            "unexpected default rootfs: {rootfs}"
         );
     }
 
@@ -1879,5 +1898,142 @@ mod tests {
             &Backend::Vm(&config, &FailingVmRunner, &tmp.path().join("out.tar")),
         );
         assert!(result.is_err(), "expected Err, got {result:?}");
+    }
+
+    /// The VM half of a selection, or `None` if the CLI arm was taken.
+    fn vm_parts(selected: Selected) -> Option<(VmConfig, PathBuf)> {
+        match selected {
+            Selected::Vm(config, output) => Some((config, output)),
+            Selected::Cli(_) => None,
+        }
+    }
+
+    /// The VM half of a backend, or `None` if it is a CLI backend.
+    fn vm_backend_parts<'a>(backend: Backend<'a>) -> Option<(&'a VmConfig, &'a Path)> {
+        match backend {
+            Backend::Vm(config, _, output) => Some((config, output)),
+            Backend::Cli(..) => None,
+        }
+    }
+
+    // select_runtime
+
+    #[test]
+    fn select_runtime_vm_resolves_config_and_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = fake_vm_rootfs(tmp.path());
+        let cli = parse_cli(&[
+            "--runtime",
+            "vm",
+            "--vm-rootfs",
+            rootfs.to_str().unwrap(),
+            "--vm-cpus",
+            "4",
+            "--vm-memory",
+            "8192",
+            "myimage:latest",
+        ])
+        .unwrap();
+        let (config, output) = vm_parts(select_runtime(&cli).unwrap()).unwrap();
+        assert_eq!(config.rootfs, rootfs);
+        assert_eq!(config.cpus, 4);
+        assert_eq!(config.memory_mib, 8192);
+        // No --vm-output, so the name is derived from the tag.
+        assert_eq!(output, PathBuf::from("myimage-latest.tar"));
+    }
+
+    #[test]
+    fn select_runtime_vm_honours_the_output_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = fake_vm_rootfs(tmp.path());
+        let out = tmp.path().join("custom.tar");
+        let cli = parse_cli(&[
+            "--runtime",
+            "vm",
+            "--vm-rootfs",
+            rootfs.to_str().unwrap(),
+            "--vm-output",
+            out.to_str().unwrap(),
+            "myimage:latest",
+        ])
+        .unwrap();
+        let (_, output) = vm_parts(select_runtime(&cli).unwrap()).unwrap();
+        assert_eq!(output, out);
+    }
+
+    #[test]
+    fn select_runtime_vm_rejects_an_unusable_rootfs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("no-such-rootfs");
+        let cli = parse_cli(&[
+            "--runtime",
+            "vm",
+            "--vm-rootfs",
+            missing.to_str().unwrap(),
+            "myimage:latest",
+        ])
+        .unwrap();
+        // `Selected` has no `Debug`, so `unwrap_err` is unavailable here.
+        let err = select_runtime(&cli).err().unwrap();
+        assert!(
+            err.contains("no-such-rootfs"),
+            "error should name the rootfs: {err}"
+        );
+    }
+
+    #[test]
+    fn select_runtime_cli_takes_the_container_cli_arm() {
+        let cli = parse_cli(&["--runtime", "podman", "myimage:latest"]).unwrap();
+        // Whether podman is on PATH varies by machine, and the CLI arm runs
+        // either way. A VM selection would mean the wrong arm was taken; an
+        // error that does not name the binary would mean it failed elsewhere.
+        let r = select_runtime(&cli);
+        let cli_arm = r.map_or_else(|e| e.contains("podman"), |s| vm_parts(s).is_none());
+        assert!(cli_arm, "--runtime podman must take the container CLI arm");
+    }
+
+    // backend_for
+
+    #[test]
+    fn backend_for_maps_each_selection_to_its_backend() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = VmConfig::new(&fake_vm_rootfs(tmp.path()));
+        let vm = Selected::Vm(config, tmp.path().join("out.tar"));
+        assert!(vm_backend_parts(backend_for(&vm)).is_some());
+        // The CLI arm of both `backend_for` and the helper above.
+        let cli = Selected::Cli(ContainerCli::Docker);
+        assert!(vm_backend_parts(backend_for(&cli)).is_none());
+        // And the CLI arm of `vm_parts`.
+        assert!(vm_parts(cli).is_none());
+    }
+
+    #[test]
+    fn backend_for_vm_selection_passes_through_the_config_and_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = fake_vm_rootfs(tmp.path());
+        let out = tmp.path().join("out.tar");
+        let selected = Selected::Vm(VmConfig::new(&rootfs), out.clone());
+        let (config, output) = vm_backend_parts(backend_for(&selected)).unwrap();
+        assert_eq!(config.rootfs, rootfs);
+        assert_eq!(output, out);
+    }
+
+    // build_summary
+
+    #[test]
+    fn build_summary_names_the_tarball_a_vm_build_wrote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = VmConfig::new(&fake_vm_rootfs(tmp.path()));
+        let selected = Selected::Vm(config, PathBuf::from("out/myimage-latest.tar"));
+        assert_eq!(
+            build_summary(&selected).as_deref(),
+            Some("Wrote out/myimage-latest.tar")
+        );
+    }
+
+    #[test]
+    fn build_summary_is_silent_for_a_cli_build() {
+        // The image lands in the CLI's own store, so there is no path to report.
+        assert_eq!(build_summary(&Selected::Cli(ContainerCli::Podman)), None);
     }
 }
