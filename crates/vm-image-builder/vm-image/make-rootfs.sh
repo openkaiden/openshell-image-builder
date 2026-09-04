@@ -42,8 +42,20 @@ podman build \
 echo "Exporting rootfs to $ROOTFS..."
 mkdir -p "$ROOTFS"
 CONTAINER="$(podman create --platform linux/arm64 "$IMAGE")"
-podman export "$CONTAINER" | tar -C "$ROOTFS" -x
-podman rm "$CONTAINER" >/dev/null
+
+# /bin/sh reports only the last command's status for a pipeline, so
+# `podman export | tar -x` would hide an export that died mid-stream and leave
+# a truncated rootfs behind. Export to a file first and check that step alone.
+# The trap removes the archive and the container even when extraction fails.
+ARCHIVE="$(mktemp "${TMPDIR:-/tmp}/openshell-rootfs.XXXXXX")"
+cleanup() {
+    rm -f "$ARCHIVE"
+    podman rm "$CONTAINER" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+podman export "$CONTAINER" > "$ARCHIVE"
+tar -C "$ROOTFS" -xf "$ARCHIVE"
 
 # podman create may mount the host's /etc/resolv.conf into the container,
 # overwriting the one baked into the image. Write it explicitly after export.

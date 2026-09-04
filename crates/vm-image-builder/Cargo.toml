@@ -27,14 +27,18 @@ license = "Apache-2.0"
 # and libclang at build time. Without it the crate still compiles everywhere,
 # and `KrunRunner` reports the build as unsupported.
 default = []
-krun = ["dep:krun-sys", "dep:libc"]
+krun = ["dep:krun-sys"]
 
 [dependencies]
 log = "0.4"
+
+# Used for `fork`/`waitpid` in the krun backend and for `O_NOFOLLOW` when
+# writing the Containerfile into a caller-supplied build context.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # libkrun uses Apple's Hypervisor.framework, which exists only on Apple Silicon.
 # Scoping the dependency to that target keeps `--features krun` from dragging
 # krun-sys into a Linux or Windows build.
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 krun-sys = { version = "1", optional = true }
-libc = { version = "0.2", optional = true }

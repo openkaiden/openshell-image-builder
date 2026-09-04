@@ -162,15 +162,20 @@ struct Cli {
                 Defaults to a name derived from <TAG> in the current directory."
     )]
     vm_output: Option<PathBuf>,
+    // libkrun rejects a zero vCPU count and a zero memory size, so clap turns
+    // those into a flag-specific parse error rather than a generic VM
+    // configuration failure after the build context has been staged.
     #[arg(
         long = "vm-cpus",
         value_name = "N",
+        value_parser = clap::value_parser!(u8).range(1..),
         help = "vCPUs given to the build VM (--runtime vm only)."
     )]
     vm_cpus: Option<u8>,
     #[arg(
         long = "vm-memory",
         value_name = "MIB",
+        value_parser = clap::value_parser!(u32).range(1..),
         help = "RAM in MiB given to the build VM (--runtime vm only)."
     )]
     vm_memory: Option<u32>,
@@ -352,6 +357,12 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
         return Err("--endpoint is not supported for the vertexai inference provider".into());
+    }
+    // An unsupported host, or a binary built without the `vm` feature, is
+    // rejected here rather than from inside the runner, so `--runtime vm`
+    // fails before a whole build context has been staged.
+    if let Backend::Vm(_, runner, _) = backend {
+        runner.check_supported()?;
     }
     let config = config::load(config_path.clone())?;
     let workspace = if with_workspace_config {
@@ -715,7 +726,15 @@ mod tests {
         let rootfs = dir.join("vm-rootfs");
         let bin = rootfs.join("usr/local/bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("vm-build"), "#!/bin/sh\n").unwrap();
+        let helper = bin.join("vm-build");
+        std::fs::write(&helper, "#!/bin/sh\n").unwrap();
+        // `check_rootfs` requires the execute bit, as libkrun exec's the
+        // helper. Only Unix has one, and only there does the check run.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         rootfs
     }
 

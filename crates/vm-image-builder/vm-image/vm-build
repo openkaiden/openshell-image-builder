@@ -46,11 +46,16 @@ mount -t virtiofs openshell-output  /build/output
 # virtiofs on APFS does not fully support xattrs: lgetxattr on dangling symlinks
 # returns ENOENT, which breaks buildah's VFS layer copy. Mount tmpfs over the
 # buildah storage root so xattr operations happen on a native Linux filesystem.
-# The size limit must accommodate pulled base image layers (VFS stores full copies,
-# so a typical Fedora build needs 2-4 GB). Set an explicit limit rather than
-# relying on the kernel default (50% of RAM), which is too small.
+#
+# The size limit must accommodate pulled base image layers (VFS stores full
+# copies, so a typical Fedora build needs 2-4 GB), but tmpfs pages come out of
+# guest RAM: a ceiling above the VM's memory just moves the failure from a clean
+# ENOSPC to an OOM kill. Derive it from the VM's actual memory instead of the
+# kernel default (50% of RAM), leaving a quarter for buildah and the kernel.
+MEM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+STORAGE_MB=$((MEM_KB * 3 / 4 / 1024))
 mkdir -p /var/lib/containers
-mount -t tmpfs -o size=8192m tmpfs /var/lib/containers
+mount -t tmpfs -o size="${STORAGE_MB}m" tmpfs /var/lib/containers
 
 # buildah writes lock files under /run/containers, which sits on the
 # virtiofs-mounted rootfs and persists between VM runs. Mount a tmpfs

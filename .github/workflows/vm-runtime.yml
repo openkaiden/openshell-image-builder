@@ -68,6 +68,11 @@ jobs:
     environment: integration # requires maintainer approval before the job runs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here runs an authenticated git command, and the
+          # self-hosted runner would otherwise keep the token in the
+          # checkout it just filled with pull-request code.
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1 stable
@@ -124,6 +129,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here runs an authenticated git command, and the
+          # self-hosted runner would otherwise keep the token in the
+          # checkout it just filled with pull-request code.
+          persist-credentials: false
 
       - name: Install podman
         run: sudo apt-get update && sudo apt-get install -y podman
@@ -150,6 +160,11 @@ jobs:
     environment: integration # requires maintainer approval before the job runs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here runs an authenticated git command, and the
+          # self-hosted runner would otherwise keep the token in the
+          # checkout it just filled with pull-request code.
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1 stable

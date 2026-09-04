@@ -161,14 +161,14 @@ impl VmConfig {
     ///
     /// This is the VM counterpart of `ContainerCli::check_in_path`: it lets the
     /// caller fail before doing any staging work. It checks that the directory
-    /// exists and that the [`VM_BUILD_SCRIPT`] helper is present inside it —
-    /// the two failures that are otherwise only reported from inside the VM,
-    /// where the diagnostics are far worse.
+    /// exists and that the [`VM_BUILD_SCRIPT`] helper is present and executable
+    /// inside it — the failures that are otherwise only reported from inside
+    /// the VM, where the diagnostics are far worse.
     ///
     /// # Errors
     ///
     /// Returns [`VmBuildError::Rootfs`] if the directory is missing, is not a
-    /// directory, or has no `vm-build` helper.
+    /// directory, or has no executable `vm-build` helper.
     ///
     /// [`rootfs`]: VmConfig::rootfs
     pub fn check_rootfs(&self) -> Result<(), VmBuildError> {
@@ -186,6 +186,19 @@ impl VmConfig {
                 path: self.rootfs.clone(),
                 reason: "missing /usr/local/bin/vm-build — not a build rootfs",
             });
+        }
+        // libkrun exec's the helper directly, so a present-but-not-executable
+        // file fails after boot with a far worse diagnostic. Catch it here.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&helper)?.permissions().mode();
+            if mode & 0o111 == 0 {
+                return Err(VmBuildError::Rootfs {
+                    path: self.rootfs.clone(),
+                    reason: "/usr/local/bin/vm-build is not executable",
+                });
+            }
         }
         Ok(())
     }
@@ -352,6 +365,21 @@ impl From<std::io::Error> for VmBuildError {
 pub trait VmRunner {
     /// Runs `build` to completion.
     fn run(&self, build: &VmBuild) -> Result<(), VmBuildError>;
+
+    /// Returns `Ok(())` when this runner can boot a VM on the current host.
+    ///
+    /// Callers use this to fail before staging a build context that [`run`]
+    /// would only reject afterwards. The default is `Ok(())`, which is right
+    /// for fakes; [`KrunRunner`] overrides it where libkrun is unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VmBuildError::Unsupported`] if the host cannot run a VM.
+    ///
+    /// [`run`]: VmRunner::run
+    fn check_supported(&self) -> Result<(), VmBuildError> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +406,12 @@ impl VmRunner for KrunRunner {
 
     #[cfg(not(all(feature = "krun", target_os = "macos", target_arch = "aarch64")))]
     fn run(&self, _build: &VmBuild) -> Result<(), VmBuildError> {
+        self.check_supported()?;
+        unreachable!("check_supported always fails without libkrun")
+    }
+
+    #[cfg(not(all(feature = "krun", target_os = "macos", target_arch = "aarch64")))]
+    fn check_supported(&self) -> Result<(), VmBuildError> {
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
         return Err(VmBuildError::Unsupported(
             "libkrun requires macOS on Apple Silicon",
@@ -446,7 +480,7 @@ pub fn build(
     context_dir: &Path,
     output: &Path,
 ) -> Result<(), VmBuildError> {
-    std::fs::write(context_dir.join(CONTAINERFILE_NAME), containerfile)?;
+    write_containerfile(context_dir, containerfile)?;
 
     let rootfs = canonicalize(config.rootfs.as_path(), "VM rootfs")?;
     let context = canonicalize(context_dir, "build context")?;
@@ -491,6 +525,32 @@ pub fn build(
     );
 
     runner.run(&build)
+}
+
+/// Writes `containerfile` into `context_dir` as [`CONTAINERFILE_NAME`].
+///
+/// `context_dir` is caller-supplied, so an existing `Containerfile` there may
+/// be a symlink pointing anywhere the process can write. On Unix the file is
+/// opened with `O_NOFOLLOW` so such a symlink fails the write instead of
+/// redirecting it.
+fn write_containerfile(context_dir: &Path, containerfile: &str) -> Result<(), VmBuildError> {
+    use std::io::Write;
+
+    let path = context_dir.join(CONTAINERFILE_NAME);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(&path).map_err(|source| VmBuildError::Path {
+        what: "Containerfile in the build context",
+        path,
+        source,
+    })?;
+    file.write_all(containerfile.as_bytes())?;
+    Ok(())
 }
 
 /// Canonicalizes `path`, tagging the error with what the path was for.
@@ -553,7 +613,14 @@ mod tests {
         let rootfs = dir.join("rootfs");
         let bin = rootfs.join("usr/local/bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("vm-build"), "#!/bin/sh\n").unwrap();
+        let helper = bin.join("vm-build");
+        std::fs::write(&helper, "#!/bin/sh\n").unwrap();
+        // `check_rootfs` requires the execute bit, as libkrun exec's the helper.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         rootfs
     }
 
@@ -593,6 +660,23 @@ mod tests {
         assert!(err.to_string().contains("vm-build"), "unexpected: {err}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn check_rootfs_rejects_a_helper_without_the_execute_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir();
+        let rootfs = fake_rootfs(tmp.path());
+        let helper = rootfs.join("usr/local/bin/vm-build");
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = VmConfig::new(&rootfs).check_rootfs().unwrap_err();
+        assert!(
+            err.to_string().contains("not executable"),
+            "unexpected: {err}"
+        );
+    }
+
     // --- build ---
 
     #[test]
@@ -614,6 +698,35 @@ mod tests {
 
         let written = std::fs::read_to_string(context.join("Containerfile")).unwrap();
         assert_eq!(written, CONTAINERFILE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_refuses_to_follow_a_containerfile_symlink() {
+        let tmp = tempdir();
+        let context = tmp.path().join("context");
+        std::fs::create_dir_all(&context).unwrap();
+
+        // A symlink planted in the context, pointing outside it.
+        let target = tmp.path().join("outside");
+        std::fs::write(&target, "original").unwrap();
+        std::os::unix::fs::symlink(&target, context.join("Containerfile")).unwrap();
+
+        let err = build(
+            CONTAINERFILE,
+            TAG,
+            &VmConfig::new(&fake_rootfs(tmp.path())),
+            &CaptureRunner::new(),
+            &context,
+            &tmp.path().join("out.tar"),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, VmBuildError::Path { .. }),
+            "unexpected: {err}"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
     }
 
     #[test]
