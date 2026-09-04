@@ -29,8 +29,12 @@
 //!
 //! So the VM is entered in a forked child and the parent reaps it, turning the
 //! VM's exit code into a `Result`. Forking without an immediate `exec` is only
-//! safe in a single-threaded process — which this is at build time — because a
-//! lock held by another thread at fork time would be held forever in the child.
+//! safe in a single-threaded process, because a lock held by another thread at
+//! fork time would be held forever in the child. The CLI is single-threaded, but
+//! this crate is a library and cannot assume its callers are, so
+//! [`check_single_threaded`] verifies it immediately before the fork.
+//!
+//! [`check_single_threaded`]: crate::check_single_threaded
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -62,8 +66,13 @@ pub fn run(build: &VmBuild) -> Result<(), VmBuildError> {
     // fork, so failures surface as ordinary errors.
     let args = Args::new(build)?;
 
-    // SAFETY: the process is single-threaded at this point (the CLI does no
-    // threading), so the child inherits a consistent address space.
+    // The fork below is only sound in a single-threaded process. Checking it
+    // here — rather than trusting the caller — turns what would otherwise be a
+    // silent deadlock in the child into an error the caller can report.
+    crate::check_single_threaded()?;
+
+    // SAFETY: `check_single_threaded` just established that no other thread can
+    // be holding a lock, so the child inherits a consistent address space.
     let pid = unsafe { libc::fork() };
     match pid {
         -1 => Err(VmBuildError::Io(std::io::Error::last_os_error())),

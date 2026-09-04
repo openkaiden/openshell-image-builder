@@ -289,6 +289,9 @@ pub enum VmBuildError {
     /// This binary cannot run VM builds — wrong platform, the `krun` feature is
     /// off, or the required entitlement is missing.
     Unsupported(&'static str),
+    /// The calling process had more than one thread, which makes the fork the
+    /// libkrun backend performs unsafe. See [`check_single_threaded`].
+    MultiThreaded { threads: usize },
     /// A libkrun call failed. `call` names the C function.
     Krun { call: &'static str, code: i32 },
     /// The build inside the VM exited non-zero.
@@ -310,6 +313,12 @@ impl std::fmt::Display for VmBuildError {
             VmBuildError::Unsupported(reason) => {
                 write!(f, "VM builds are not available: {reason}")
             }
+            VmBuildError::MultiThreaded { threads } => write!(
+                f,
+                "cannot start a VM from a process with {threads} threads: libkrun is \
+                 entered after fork() without exec(), which is only safe while the \
+                 process is single-threaded"
+            ),
             VmBuildError::Krun { call, code } => {
                 write!(f, "libkrun call {call} failed with code {code}")
             }
@@ -525,6 +534,64 @@ pub fn build(
     );
 
     runner.run(&build)
+}
+
+/// Returns `Ok(())` when the current process may safely enter a microVM.
+///
+/// The libkrun backend cannot call `krun_start_enter` on the host thread:
+/// libkrun takes the process over and exits it once the VM shuts down. It
+/// therefore forks and enters the VM in the child, which is only sound while
+/// the process is single-threaded.
+///
+/// `fork` duplicates the calling thread alone, but copies the whole address
+/// space — including any lock another thread happened to hold at that instant.
+/// In the child that lock is held by a thread that no longer exists, so it is
+/// never released, and the first allocation or `eprintln!` in the child blocks
+/// forever. The parent then waits on a child that will never exit, and the
+/// build hangs with no diagnostic at all.
+///
+/// This turns that hang into an ordinary error. It is checked immediately
+/// before the fork rather than once at startup, since a thread spawned in
+/// between would invalidate an earlier answer.
+///
+/// Off macOS there is nothing to check: the libkrun backend does not run there.
+/// If the thread count cannot be read, this returns `Ok(())` rather than
+/// blocking a build over a failed introspection call.
+///
+/// # Errors
+///
+/// Returns [`VmBuildError::MultiThreaded`] if the process has more than one
+/// thread.
+pub fn check_single_threaded() -> Result<(), VmBuildError> {
+    #[cfg(target_os = "macos")]
+    if let Some(threads) = host_thread_count()
+        && threads > 1
+    {
+        return Err(VmBuildError::MultiThreaded { threads });
+    }
+    Ok(())
+}
+
+/// Returns the number of threads in this process, or `None` if it cannot be
+/// determined.
+#[cfg(target_os = "macos")]
+fn host_thread_count() -> Option<usize> {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: `info` is a live, correctly sized out-parameter for
+    // PROC_PIDTASKINFO, and the pid queried is our own.
+    let ret = unsafe {
+        libc::proc_pidinfo(
+            std::process::id() as libc::c_int,
+            libc::PROC_PIDTASKINFO,
+            0,
+            std::ptr::from_mut(&mut info).cast::<libc::c_void>(),
+            size,
+        )
+    };
+    // A short read means the struct was not filled in; anything less than a
+    // full write leaves `pti_threadnum` untrustworthy.
+    (ret == size).then(|| info.pti_threadnum.max(0) as usize)
 }
 
 /// Writes `containerfile` into `context_dir` as [`CONTAINERFILE_NAME`].
@@ -871,6 +938,63 @@ mod tests {
             memory_mib: 4096,
         };
         assert_eq!(build.output_path(), PathBuf::from("/out/image.tar"));
+    }
+
+    // --- check_single_threaded ---
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_thread_count_sees_this_process() {
+        let before = host_thread_count().expect("thread count should be readable");
+        assert!(before >= 1, "a running process has at least one thread");
+
+        // Hold some threads alive across the second reading. They park on a
+        // channel rather than sleeping, so the count is not a race.
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = std::sync::Arc::new(Mutex::new(release_rx));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let started_tx = started_tx.clone();
+                let release_rx = std::sync::Arc::clone(&release_rx);
+                std::thread::spawn(move || {
+                    started_tx.send(()).unwrap();
+                    let _ = release_rx.lock().unwrap().recv();
+                })
+            })
+            .collect();
+        for _ in 0..4 {
+            started_rx.recv().unwrap();
+        }
+
+        let during = host_thread_count().expect("thread count should be readable");
+        assert!(
+            during >= before + 4,
+            "expected at least {} threads, saw {during}",
+            before + 4
+        );
+
+        drop(release_tx);
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn check_single_threaded_rejects_a_threaded_process() {
+        // The test harness runs tests on worker threads, so this process is
+        // multithreaded by construction — exactly the case the check exists to
+        // catch before `krun::run` reaches its fork.
+        let err = check_single_threaded().unwrap_err();
+        let VmBuildError::MultiThreaded { threads } = err else {
+            panic!("unexpected: {err}");
+        };
+        assert!(threads > 1, "expected more than one thread, saw {threads}");
+
+        let msg = VmBuildError::MultiThreaded { threads: 7 }.to_string();
+        assert!(msg.contains("7 threads"), "unexpected: {msg}");
+        assert!(msg.contains("single-threaded"), "unexpected: {msg}");
     }
 
     // --- KrunRunner ---
