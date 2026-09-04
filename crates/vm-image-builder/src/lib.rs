@@ -458,6 +458,9 @@ impl VmRunner for KrunRunner {
 ///
 /// # Errors
 ///
+/// - [`VmBuildError::Rootfs`] if `config` does not point at a usable build
+///   rootfs. This is checked first, so a bad rootfs leaves `context_dir`
+///   untouched.
 /// - [`VmBuildError::Io`] if the Containerfile cannot be written or the output
 ///   directory cannot be created.
 /// - [`VmBuildError::Path`] if the rootfs, context, or output directory cannot
@@ -489,6 +492,12 @@ pub fn build(
     context_dir: &Path,
     output: &Path,
 ) -> Result<(), VmBuildError> {
+    // Validate the rootfs before writing anything: it is the failure most
+    // likely to be a misconfiguration, it has by far the most actionable
+    // message, and checking it first keeps a doomed build from leaving a
+    // Containerfile behind in the caller's context directory.
+    config.check_rootfs()?;
+
     write_containerfile(context_dir, containerfile)?;
 
     let rootfs = canonicalize(config.rootfs.as_path(), "VM rootfs")?;
@@ -871,20 +880,55 @@ mod tests {
     }
 
     #[test]
-    fn build_reports_which_path_failed_to_resolve() {
+    fn build_rejects_an_unusable_rootfs_before_touching_the_context() {
         let tmp = tempdir();
+        let context = tmp.path().join("context");
+        std::fs::create_dir_all(&context).unwrap();
+
         let err = build(
             CONTAINERFILE,
             TAG,
             &VmConfig::new(Path::new("/a/really/improbable/rootfs")),
             &CaptureRunner::new(),
-            tmp.path(),
+            &context,
             &tmp.path().join("out.tar"),
         )
         .unwrap_err();
 
-        assert!(matches!(err, VmBuildError::Path { .. }));
+        assert!(
+            matches!(err, VmBuildError::Rootfs { .. }),
+            "unexpected: {err}"
+        );
         assert!(err.to_string().contains("VM rootfs"), "unexpected: {err}");
+        // The context is the caller's directory: a rejected build must not have
+        // written into it.
+        assert!(
+            !context.join(CONTAINERFILE_NAME).exists(),
+            "build left a Containerfile behind after rejecting the rootfs"
+        );
+    }
+
+    #[test]
+    fn build_reports_which_path_failed_to_resolve() {
+        let tmp = tempdir();
+        let err = build(
+            CONTAINERFILE,
+            TAG,
+            &VmConfig::new(&fake_rootfs(tmp.path())),
+            &CaptureRunner::new(),
+            &tmp.path().join("no/such/context"),
+            &tmp.path().join("out.tar"),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, VmBuildError::Path { .. }),
+            "unexpected: {err}"
+        );
+        assert!(
+            err.to_string().contains("build context"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]
@@ -945,11 +989,11 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn host_thread_count_sees_this_process() {
-        let before = host_thread_count().expect("thread count should be readable");
-        assert!(before >= 1, "a running process has at least one thread");
+        let count = host_thread_count().expect("thread count should be readable");
+        assert!(count >= 1, "a running process has at least one thread");
 
         // Hold some threads alive across the second reading. They park on a
-        // channel rather than sleeping, so the count is not a race.
+        // channel rather than sleeping, so they are certainly still running.
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let release_rx = std::sync::Arc::new(Mutex::new(release_rx));
@@ -967,12 +1011,12 @@ mod tests {
             started_rx.recv().unwrap();
         }
 
+        // Only a lower bound is sound here: the test harness runs tests
+        // concurrently, so threads unrelated to this one start and exit while
+        // it runs and a delta against `before` would be racy. The four parked
+        // threads plus this one are definitely alive, so the count is >= 5.
         let during = host_thread_count().expect("thread count should be readable");
-        assert!(
-            during >= before + 4,
-            "expected at least {} threads, saw {during}",
-            before + 4
-        );
+        assert!(during >= 5, "expected at least 5 threads, saw {during}");
 
         drop(release_tx);
         for handle in handles {
